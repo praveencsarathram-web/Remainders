@@ -363,6 +363,7 @@
   let showSettings = false;
   let searchQuery = '';
   let priorityFilter = null;
+  let dateFilterMode = 'all'; // 'all' | 'today'
   let showDeleteConfirm = false;
   let pendingDeleteIds = new Set();
   let sortMode = 'due'; // 'due' | 'priority'
@@ -857,10 +858,20 @@
   function matchesFilters(r) {
     if (!matchesSearch(r)) return false;
     if (priorityFilter !== null && r.priority !== priorityFilter) return false;
+    if (dateFilterMode === 'today' && r.when) {
+      const d = new Date(r.when);
+      const now = new Date();
+      const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+      if (!sameDay) return false;
+    }
     return true;
   }
   function togglePriorityFilter(p) {
     priorityFilter = (priorityFilter === p) ? null : p;
+    render();
+  }
+  function setDateFilterMode(mode) {
+    dateFilterMode = mode;
     render();
   }
 
@@ -1071,6 +1082,11 @@
         <span class="sort-label">Sort by</span>
         <button class="sort-chip ${sortMode === 'due' ? 'active' : ''}" data-sort="due">Due time</button>
         <button class="sort-chip ${sortMode === 'priority' ? 'active' : ''}" data-sort="priority">Priority</button>
+      </div>
+      <div class="sort-row">
+        <span class="sort-label">Show</span>
+        <button class="sort-chip ${dateFilterMode === 'all' ? 'active' : ''}" data-date-filter="all">All</button>
+        <button class="sort-chip ${dateFilterMode === 'today' ? 'active' : ''}" data-date-filter="today">Today only</button>
       </div>` : ''}
 
       ${!selectMode ? `
@@ -1450,6 +1466,9 @@
     });
     document.querySelectorAll('[data-sort]').forEach(el => {
       el.addEventListener('click', () => { sortMode = el.dataset.sort; render(); });
+    });
+    document.querySelectorAll('[data-date-filter]').forEach(el => {
+      el.addEventListener('click', () => setDateFilterMode(el.dataset.dateFilter));
     });
   }
 
