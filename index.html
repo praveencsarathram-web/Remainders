@@ -1046,7 +1046,7 @@
 
       ${selectMode && selectedIds.size > 0 ? renderBulkBar() : ''}
       ${showAddPopup ? renderAddPopup(savedTitleValue, savedTimeValue) : ''}
-      ${alarmQueue.length && !alertsPaused ? renderAlarm() : ''}
+      ${alarmQueue.length && !alertsPaused && !editingId ? renderAlarm() : ''}
       ${showDeleteConfirm ? renderDeleteConfirm() : ''}
     `;
 
