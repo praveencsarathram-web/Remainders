@@ -367,6 +367,8 @@
   let pendingDeleteIds = new Set();
   let sortMode = 'due'; // 'due' | 'priority'
   let editingId = null;
+  let liveEditTitle = null;
+  let liveEditTime = null;
   let showAddPopup = false;
   let addPriority = 1;
 
@@ -716,10 +718,14 @@
   }
   function startEdit(id) {
     editingId = id;
+    liveEditTitle = null;
+    liveEditTime = null;
     render();
   }
   function cancelEdit() {
     editingId = null;
+    liveEditTitle = null;
+    liveEditTime = null;
     render();
   }
   function saveEdit(id, title, whenValue) {
@@ -732,6 +738,8 @@
       r.updated = Date.now();
     }
     editingId = null;
+    liveEditTitle = null;
+    liveEditTime = null;
     save();
     render();
   }
@@ -817,6 +825,8 @@
     if (r) { r.suppressedUntil = r.when; r.updated = Date.now(); save(); }
     alarmQueue.shift();
     editingId = id;
+    liveEditTitle = null;
+    liveEditTime = null;
     render();
   }
   function deleteFromEdit(id) {
@@ -1005,6 +1015,15 @@
     const searchWasFocused = document.activeElement === searchField;
     const savedSearchCaret = searchField ? searchField.selectionStart : null;
 
+    // Preserve whatever's currently in the edit form (including un-saved
+    // clicks like a snooze/absolute-time button) across background re-renders.
+    const editTitleField = editingId ? document.getElementById('edit-title-' + editingId) : null;
+    const editTitleFocused = document.activeElement === editTitleField;
+    const editTitleCaret = editTitleField ? editTitleField.selectionStart : null;
+    liveEditTitle = editTitleField ? editTitleField.value : null;
+    const editTimeField = editingId ? document.getElementById('edit-time-' + editingId) : null;
+    liveEditTime = editTimeField ? editTimeField.value : null;
+
     const active = sortList(reminders.filter(r => !r.done && matchesFilters(r)));
     const done = sortList(reminders.filter(r => r.done && matchesFilters(r)));
     const totalActiveCount = reminders.filter(r => !r.done).length;
@@ -1059,6 +1078,10 @@
     if (searchWasFocused) {
       const el = document.getElementById('search-input');
       if (el) { el.focus(); if (savedSearchCaret !== null) el.setSelectionRange(savedSearchCaret, savedSearchCaret); }
+    }
+    if (editTitleFocused) {
+      const el = document.getElementById('edit-title-' + editingId);
+      if (el) { el.focus(); if (editTitleCaret !== null) el.setSelectionRange(editTitleCaret, editTitleCaret); }
     }
   }
 
@@ -1123,11 +1146,13 @@
     const due = isDue(r);
 
     if (editingId === r.id) {
+      const titleVal = liveEditTitle !== null ? liveEditTitle : r.title;
+      const timeVal = liveEditTime !== null ? liveEditTime : isoToLocalInputValue(r.when);
       return `
         <div class="reminder p${priority}">
           <div class="reminder-body" style="width:100%;">
-            <input type="text" class="edit-title-input" id="edit-title-${r.id}" value="${escapeHtml(r.title)}" />
-            <input type="datetime-local" class="edit-time-input" id="edit-time-${r.id}" value="${isoToLocalInputValue(r.when)}" />
+            <input type="text" class="edit-title-input" id="edit-title-${r.id}" value="${escapeHtml(titleVal)}" />
+            <input type="datetime-local" class="edit-time-input" id="edit-time-${r.id}" value="${timeVal}" />
             <p class="snooze-label" style="margin:0 0 6px;">Push time forward by</p>
             <div class="snooze-grid">
               <button class="snooze-btn" data-edit-bump="${r.id}" data-minutes="5">5m</button>
