@@ -1,0 +1,1045 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Reminders</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --ink: #1c1a17;
+    --paper: #faf7f2;
+    --card: #ffffff;
+    --ember: #c4502d;
+    --ember-soft: #f4ded4;
+    --gold: #b8860f;
+    --line: #e8e2d8;
+    --muted: #948b7d;
+    --done-bg: #f1efe9;
+    --select: #2c6e5e;
+    --select-soft: #dcece6;
+    --p1: #c0392b;
+    --p2: #d9730d;
+    --p3: #c9a227;
+    --p4: #3f8f5f;
+    --p5: #4472a8;
+    font-family: 'Georgia', 'Iowan Old Style', serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--paper); }
+  body { min-height: 100vh; }
+
+  #app-root {
+    background: var(--paper);
+    color: var(--ink);
+    min-height: 100vh;
+    padding: 28px 20px 90px;
+    max-width: 520px;
+    margin: 0 auto;
+    position: relative;
+  }
+
+  .header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
+  .header h1 { font-size: 28px; font-weight: 400; letter-spacing: 0.2px; margin: 0; }
+  .header-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .header .count { font-family: -apple-system, system-ui, sans-serif; font-size: 13px; color: var(--muted); }
+
+  .pill-btn {
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: 12.5px;
+    border: none;
+    border-radius: 20px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .select-toggle { color: var(--select); background: var(--select-soft); }
+  .settings-toggle { color: var(--ink); background: var(--line); }
+
+  .subtitle { font-family: -apple-system, system-ui, sans-serif; font-size: 13px; color: var(--muted); margin: 0 0 16px; }
+
+  .sync-status {
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: 11.5px;
+    color: var(--muted);
+    margin: -6px 0 18px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .sync-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  .sync-dot.on { background: var(--select); }
+  .sync-dot.err { background: var(--ember); }
+
+  .settings-panel {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 22px;
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  .settings-panel h2 { font-family: 'Georgia', serif; font-size: 17px; margin: 0 0 8px; font-weight: 400; }
+  .settings-panel p { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin: 0 0 10px; }
+  .settings-panel label { font-size: 12px; color: var(--ink); display: block; margin-bottom: 4px; font-weight: 600; }
+  .settings-panel input[type="text"] {
+    width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px;
+    font-size: 13px; font-family: -apple-system, system-ui, sans-serif; margin-bottom: 12px; background: var(--paper); color: var(--ink);
+  }
+  .settings-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .settings-btn {
+    background: var(--ember); color: white; border: none; border-radius: 8px;
+    padding: 9px 14px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: -apple-system, system-ui, sans-serif;
+  }
+  .settings-btn.secondary { background: var(--line); color: var(--ink); }
+  .settings-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .add-form { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 26px; }
+  .add-form input[type="text"] {
+    width: 100%; border: none; outline: none; font-family: 'Georgia', serif; font-size: 16px; color: var(--ink);
+    background: transparent; padding: 4px 2px 12px; border-bottom: 1px solid var(--line); margin-bottom: 12px;
+  }
+  .add-form input[type="text"]::placeholder { color: #b7ae9f; }
+  .add-row { display: flex; gap: 10px; align-items: center; font-family: -apple-system, system-ui, sans-serif; }
+  .add-row input[type="datetime-local"] {
+    flex: 1; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px;
+    color: var(--ink); background: var(--paper); font-family: -apple-system, system-ui, sans-serif;
+  }
+  .add-btn {
+    background: var(--ember); color: white; border: none; border-radius: 8px; padding: 9px 16px; font-size: 13px;
+    font-weight: 600; cursor: pointer; font-family: -apple-system, system-ui, sans-serif; white-space: nowrap;
+  }
+  .add-btn:active { background: #a3401f; }
+
+  .section-label { font-family: -apple-system, system-ui, sans-serif; font-size: 12px; color: var(--muted); margin: 22px 0 10px 4px; }
+  .reminder-list { display: flex; flex-direction: column; gap: 8px; }
+  .reminder {
+    display: flex; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 13px 14px; transition: opacity 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+  }
+  .reminder.done { background: var(--done-bg); }
+  .reminder.picked { border-color: var(--select); background: var(--select-soft); }
+
+  .check, .pick-box {
+    flex-shrink: 0; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--muted);
+    display: flex; align-items: center; justify-content: center; cursor: pointer; color: transparent; transition: all 0.15s ease;
+  }
+  .pick-box { border-radius: 6px; }
+  .check.checked { background: var(--ember); border-color: var(--ember); color: white; }
+  .pick-box.checked { background: var(--select); border-color: var(--select); color: white; }
+  .check svg, .pick-box svg { width: 13px; height: 13px; }
+
+  .reminder-body { flex: 1; min-width: 0; }
+  .reminder-title { font-size: 15.5px; color: var(--ink); margin: 0; line-height: 1.3; }
+  .reminder.done .reminder-title { color: var(--muted); text-decoration: line-through; }
+  .reminder-time { font-family: -apple-system, system-ui, sans-serif; font-size: 11.5px; color: var(--gold); margin-top: 2px; }
+  .reminder.done .reminder-time { color: var(--muted); }
+
+  .priority-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+  .priority-label { font-family: -apple-system, system-ui, sans-serif; font-size: 13px; color: var(--muted); margin-right: 4px; }
+  .priority-dot { width: 27px; height: 27px; border-radius: 50%; border: 2px solid currentColor; cursor: pointer; background: transparent; padding: 0; position: relative; }
+  .priority-dot::after { content: ''; position: absolute; inset: 0; border-radius: 50%; background: currentColor; opacity: 0; transition: opacity 0.12s ease; z-index: 0; }
+  .priority-dot::before {
+    content: attr(data-p); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-family: -apple-system, system-ui, sans-serif; font-size: 12px; font-weight: 700; color: currentColor; z-index: 1;
+  }
+  .priority-dot.checked::after { opacity: 1; }
+  .priority-dot.checked::before { color: #fff; }
+  .priority-dot[data-p="1"] { color: var(--p1); }
+  .priority-dot[data-p="2"] { color: var(--p2); }
+  .priority-dot[data-p="3"] { color: var(--p3); }
+  .priority-dot[data-p="4"] { color: var(--p4); }
+  .priority-dot[data-p="5"] { color: var(--p5); }
+
+  .p1 .reminder-title { color: var(--p1); }
+  .p2 .reminder-title { color: var(--p2); }
+  .p3 .reminder-title { color: var(--p3); }
+  .p4 .reminder-title { color: var(--p4); }
+  .p5 .reminder-title { color: var(--p5); }
+  .reminder.done.p1 .reminder-title, .reminder.done.p2 .reminder-title, .reminder.done.p3 .reminder-title,
+  .reminder.done.p4 .reminder-title, .reminder.done.p5 .reminder-title { color: var(--muted); }
+
+  .not-due-tag { font-family: -apple-system, system-ui, sans-serif; font-size: 10px; color: var(--muted); }
+
+  .search-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .search-bar input[type="text"] {
+    flex: 1;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 9px 12px;
+    font-size: 13.5px;
+    font-family: -apple-system, system-ui, sans-serif;
+    background: var(--card);
+    color: var(--ink);
+    outline: none;
+  }
+  .search-clear {
+    background: var(--line);
+    border: none;
+    border-radius: 10px;
+    padding: 0 12px;
+    font-size: 13px;
+    color: var(--ink);
+    cursor: pointer;
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+
+  .priority-filter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 20px;
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  .priority-filter-label { font-size: 11.5px; color: var(--muted); margin-right: 2px; }
+  .priority-filter-chip {
+    width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid currentColor;
+    background: transparent; cursor: pointer; position: relative; padding: 0;
+  }
+  .priority-filter-chip::before {
+    content: attr(data-p); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 10.5px; font-weight: 700; color: currentColor;
+  }
+  .priority-filter-chip[data-p="1"] { color: var(--p1); }
+  .priority-filter-chip[data-p="2"] { color: var(--p2); }
+  .priority-filter-chip[data-p="3"] { color: var(--p3); }
+  .priority-filter-chip[data-p="4"] { color: var(--p4); }
+  .priority-filter-chip[data-p="5"] { color: var(--p5); }
+
+  .alarm-priority {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--done-bg);
+    border-radius: 20px;
+    padding: 4px 12px 4px 4px;
+    margin: 0 0 14px;
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: 12px;
+    color: var(--ink);
+  }
+  .alarm-priority-dot {
+    width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    color: white; font-size: 10.5px; font-weight: 700;
+  }
+
+  .delete-btn {
+    flex-shrink: 0; background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer;
+    padding: 4px 6px; line-height: 1; font-family: -apple-system, system-ui, sans-serif;
+  }
+
+  .empty-state { text-align: center; padding: 40px 20px; color: var(--muted); font-family: -apple-system, system-ui, sans-serif; font-size: 13.5px; }
+  .empty-state .glyph { font-size: 30px; margin-bottom: 10px; opacity: 0.5; }
+
+  .bulk-bar {
+    position: sticky; bottom: 0; left: 0; right: 0; background: var(--ink); color: white; border-radius: 14px;
+    padding: 12px 14px; margin-top: 16px; display: flex; flex-direction: column; gap: 10px; font-family: -apple-system, system-ui, sans-serif;
+  }
+  .bulk-row1 { display: flex; align-items: center; justify-content: space-between; }
+  .bulk-count { font-size: 13.5px; font-weight: 600; }
+  .bulk-cancel { background: none; border: none; color: #cfc8bb; font-size: 13px; cursor: pointer; }
+  .bulk-row2 { display: flex; gap: 8px; }
+  .bulk-row2 input[type="datetime-local"] { flex: 1; border: none; border-radius: 8px; padding: 8px 10px; font-size: 13px; font-family: -apple-system, system-ui, sans-serif; }
+  .bulk-apply { background: var(--ember); color: white; border: none; border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .bulk-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .bulk-chip { background: rgba(255,255,255,0.12); border: none; color: #f1ede4; font-size: 12px; padding: 6px 10px; border-radius: 20px; cursor: pointer; }
+  .bulk-delete { background: rgba(196,80,45,0.25); border: none; color: #ffb59e; font-size: 12px; padding: 6px 10px; border-radius: 20px; cursor: pointer; }
+
+  .alarm-overlay { position: fixed; inset: 0; background: rgba(28,26,23,0.55); display: flex; align-items: center; justify-content: center; z-index: 999; padding: 20px; }
+  .alarm-card { background: var(--card); border-radius: 18px; padding: 26px 22px 20px; width: 100%; max-width: 380px; text-align: center; }
+  .alarm-glyph { width: 52px; height: 52px; border-radius: 50%; background: var(--ember-soft); color: var(--ember); display: flex; align-items: center; justify-content: center; margin: 0 auto 14px; font-size: 24px; }
+  .alarm-title { font-size: 19px; margin: 0 0 4px; }
+  .alarm-time { font-family: -apple-system, system-ui, sans-serif; font-size: 12.5px; color: var(--muted); margin: 0 0 20px; }
+  .alarm-actions { display: flex; gap: 8px; justify-content: center; margin-bottom: 10px; }
+  .alarm-done-btn { background: var(--ink); color: white; border: none; border-radius: 10px; padding: 10px 18px; font-size: 13.5px; font-weight: 600; cursor: pointer; font-family: -apple-system, system-ui, sans-serif; flex: 1; }
+  .alarm-dismiss-btn { background: var(--done-bg); color: var(--ink); border: none; border-radius: 10px; padding: 10px 14px; font-size: 13.5px; cursor: pointer; font-family: -apple-system, system-ui, sans-serif; }
+  .snooze-label { font-family: -apple-system, system-ui, sans-serif; font-size: 11.5px; color: var(--muted); margin: 4px 0 8px; }
+  .snooze-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .snooze-btn { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 8px 4px; font-size: 12px; color: var(--ink); cursor: pointer; font-family: -apple-system, system-ui, sans-serif; }
+  .queue-note { font-family: -apple-system, system-ui, sans-serif; font-size: 11px; color: var(--muted); margin-top: 12px; }
+</style>
+</head>
+<body>
+<div id="app-root"></div>
+
+<script>
+(function () {
+  /* =========================================================
+     LOCAL STORAGE (always the source of truth on this device)
+     ========================================================= */
+  const LOCAL_KEY = 'reminders_app_data_v1';
+  const CLIENT_ID_KEY = 'reminders_app_gdrive_client_id';
+  const DRIVE_FILE_NAME = 'reminders-app-data.json';
+
+  let reminders = [];
+  let loaded = false;
+  let selectMode = false;
+  let selectedIds = new Set();
+  let alarmQueue = [];
+  let audioCtx = null;
+  let showSettings = false;
+  let searchQuery = '';
+  let showDeleteConfirm = false;
+  let pendingDeleteIds = new Set();
+
+  // Google Drive sync state
+  let clientId = localStorage.getItem(CLIENT_ID_KEY) || '';
+  let accessToken = null;
+  let tokenClient = null;
+  let driveFileId = null;
+  let driveStatus = 'idle'; // idle | connecting | syncing | synced | error | not-configured
+  let driveError = '';
+
+  const root = document.getElementById('app-root');
+
+  /* ---------------- helpers ---------------- */
+  function checkIcon() {
+    return '<svg viewBox="0 0 24 24" fill="none"><path d="M5 12.5L10 17L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  }
+  function pad(n) { return String(n).padStart(2, '0'); }
+  function nowLocalInputValue(offsetMs) {
+    const d = new Date(Date.now() + (offsetMs || 0));
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+  function fmtTime(iso) {
+    if (!iso) return 'No time set';
+    const d = new Date(iso);
+    if (isNaN(d)) return 'No time set';
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
+    const isTomorrow = d.toDateString() === tomorrow.toDateString();
+    const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    if (sameDay) return 'Today, ' + timeStr;
+    if (isTomorrow) return 'Tomorrow, ' + timeStr;
+    const dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return dateStr + ', ' + timeStr;
+  }
+  function escapeHtml(str) {
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+  }
+  function isDue(r) {
+    if (!r.when) return false;
+    const t = new Date(r.when).getTime();
+    return !isNaN(t) && t <= Date.now();
+  }
+
+  /* ---------------- local persistence ---------------- */
+  function saveLocal() {
+    try { localStorage.setItem(LOCAL_KEY, JSON.stringify(reminders)); }
+    catch (e) { console.error('Local save failed', e); }
+  }
+  function loadLocal() {
+    try {
+      const raw = localStorage.getItem(LOCAL_KEY);
+      if (raw) reminders = JSON.parse(raw);
+    } catch (e) { reminders = []; }
+    loaded = true;
+  }
+
+  /* Central save: writes locally immediately, then pushes to Drive if connected */
+  let pushTimer = null;
+  function save() {
+    saveLocal();
+    if (accessToken) {
+      clearTimeout(pushTimer);
+      pushTimer = setTimeout(pushToDrive, 800);
+    }
+  }
+
+  /* =========================================================
+     GOOGLE DRIVE SYNC
+     Uses the 'drive.file' scope: the app can only see/edit files
+     it created itself — it cannot browse the rest of your Drive.
+     ========================================================= */
+  function setDriveStatus(status, err) {
+    driveStatus = status;
+    driveError = err || '';
+    render();
+  }
+
+  function ensureTokenClient() {
+    if (tokenClient || !clientId) return;
+    if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) return;
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: clientId,
+      scope: 'https://www.googleapis.com/auth/drive.file',
+      callback: async (resp) => {
+        if (resp.error) { setDriveStatus('error', resp.error); return; }
+        accessToken = resp.access_token;
+        setDriveStatus('connecting');
+        await syncFromDrive();
+      }
+    });
+  }
+
+  function connectDrive() {
+    if (!clientId) { showSettings = true; render(); return; }
+    ensureTokenClient();
+    if (!tokenClient) {
+      setDriveStatus('error', 'Google sign-in script not ready yet — wait a second and try again.');
+      return;
+    }
+    tokenClient.requestAccessToken({ prompt: 'consent' });
+  }
+
+  function disconnectDrive() {
+    if (accessToken && window.google && google.accounts && google.accounts.oauth2) {
+      google.accounts.oauth2.revoke(accessToken, () => {});
+    }
+    accessToken = null;
+    driveFileId = null;
+    setDriveStatus('idle');
+  }
+
+  async function driveFetch(url, options) {
+    options = options || {};
+    options.headers = Object.assign({}, options.headers, { Authorization: 'Bearer ' + accessToken });
+    const res = await fetch(url, options);
+    if (res.status === 401) {
+      accessToken = null;
+      throw new Error('Google sign-in expired — reconnect Drive.');
+    }
+    return res;
+  }
+
+  async function findDriveFile() {
+    const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
+    const res = await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name,modifiedTime)`);
+    if (!res.ok) throw new Error('Could not search Drive (HTTP ' + res.status + ')');
+    const data = await res.json();
+    return (data.files && data.files[0]) || null;
+  }
+
+  async function createDriveFile(content) {
+    const boundary = 'reminders_boundary_xyz';
+    const metadata = { name: DRIVE_FILE_NAME, mimeType: 'application/json' };
+    const body =
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+      `--${boundary}\r\nContent-Type: application/json\r\n\r\n${content}\r\n` +
+      `--${boundary}--`;
+    const res = await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+      method: 'POST',
+      headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+      body
+    });
+    if (!res.ok) throw new Error('Could not create Drive file (HTTP ' + res.status + ')');
+    const data = await res.json();
+    return data.id;
+  }
+
+  async function updateDriveFile(fileId, content) {
+    const res = await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: content
+    });
+    if (!res.ok) throw new Error('Could not update Drive file (HTTP ' + res.status + ')');
+  }
+
+  async function readDriveFile(fileId) {
+    const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+    if (!res.ok) throw new Error('Could not read Drive file (HTTP ' + res.status + ')');
+    return res.text();
+  }
+
+  // On connect: pull whatever's in Drive (if anything) as the starting point,
+  // merging by most-recently-modified reminder id so neither device's data is lost.
+  async function syncFromDrive() {
+    try {
+      setDriveStatus('syncing');
+      const file = await findDriveFile();
+      if (file) {
+        driveFileId = file.id;
+        const text = await readDriveFile(file.id);
+        const remote = JSON.parse(text || '[]');
+        reminders = mergeReminders(reminders, remote);
+        saveLocal();
+      } else {
+        driveFileId = await createDriveFile(JSON.stringify(reminders));
+      }
+      setDriveStatus('synced');
+      render();
+    } catch (e) {
+      setDriveStatus('error', e.message || String(e));
+    }
+  }
+
+  async function pushToDrive() {
+    if (!accessToken) return;
+    try {
+      setDriveStatus('syncing');
+      if (!driveFileId) {
+        const file = await findDriveFile();
+        driveFileId = file ? file.id : await createDriveFile(JSON.stringify(reminders));
+      }
+      await updateDriveFile(driveFileId, JSON.stringify(reminders));
+      setDriveStatus('synced');
+    } catch (e) {
+      setDriveStatus('error', e.message || String(e));
+    }
+  }
+
+  function mergeReminders(local, remote) {
+    const byId = new Map();
+    local.forEach(r => byId.set(r.id, r));
+    remote.forEach(r => {
+      const existing = byId.get(r.id);
+      if (!existing || (r.created || 0) >= (existing.created || 0)) byId.set(r.id, r);
+    });
+    return Array.from(byId.values());
+  }
+
+  /* =========================================================
+     REMINDER LOGIC
+     ========================================================= */
+  function addReminder(title, when) {
+    reminders.unshift({
+      id: 'r' + Date.now() + Math.random().toString(36).slice(2, 7),
+      title: title.trim(),
+      when: when || null,
+      priority: 3,
+      done: false,
+      suppressedUntil: null,
+      created: Date.now()
+    });
+    save();
+    render();
+  }
+  function setPriority(id, priority) {
+    const r = reminders.find(r => r.id === id);
+    if (r) r.priority = priority;
+    save();
+    render();
+  }
+  function toggleDone(id) {
+    const r = reminders.find(r => r.id === id);
+    if (r) r.done = !r.done;
+    save();
+    render();
+  }
+  function removeReminder(id) {
+    reminders = reminders.filter(r => r.id !== id);
+    save();
+    render();
+  }
+  function togglePick(id) {
+    if (selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id);
+    render();
+  }
+  function toggleSelectMode() {
+    selectMode = !selectMode;
+    selectedIds.clear();
+    render();
+  }
+  function applyBulkSnooze(minutes) {
+    const target = new Date(Date.now() + minutes * 60000).toISOString();
+    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; } });
+    save(); selectMode = false; selectedIds.clear(); render();
+  }
+  function applyBulkTime(iso) {
+    if (!iso) return;
+    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = new Date(iso).toISOString(); r.suppressedUntil = null; r.done = false; } });
+    save(); selectMode = false; selectedIds.clear(); render();
+  }
+  function bulkMarkIncomplete() {
+    reminders.forEach(r => { if (selectedIds.has(r.id)) r.done = false; });
+    save(); selectMode = false; selectedIds.clear(); render();
+  }
+  function deleteBulk() {
+    pendingDeleteIds = new Set(selectedIds);
+    showDeleteConfirm = true;
+    render();
+  }
+
+  function confirmDelete() {
+    reminders = reminders.filter(r => !pendingDeleteIds.has(r.id));
+    save();
+    showDeleteConfirm = false;
+    pendingDeleteIds = new Set();
+    selectMode = false;
+    selectedIds.clear();
+    render();
+  }
+
+  function cancelDelete() {
+    showDeleteConfirm = false;
+    pendingDeleteIds = new Set();
+    render();
+  }
+
+  function matchesSearch(r) {
+    if (!searchQuery.trim()) return true;
+    return r.title.toLowerCase().includes(searchQuery.trim().toLowerCase());
+  }
+
+  function selectByPriority(p) {
+    selectMode = true;
+    selectedIds.clear();
+    reminders.forEach(r => {
+      if (!r.done && r.priority === p && matchesSearch(r)) selectedIds.add(r.id);
+    });
+    render();
+  }
+
+  function exportSelectedToExcel() {
+    const chosen = reminders.filter(r => selectedIds.has(r.id));
+    if (!chosen.length || !window.XLSX) return;
+    const rows = chosen.map(r => ({
+      Title: r.title,
+      Priority: r.priority || 3,
+      Due: r.when ? new Date(r.when).toLocaleString() : 'No time set',
+      Status: r.done ? 'Completed' : 'Active'
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Reminders');
+    XLSX.writeFile(wb, 'reminders-export.xlsx');
+  }
+
+  function downloadBackup() {
+    const blob = new Blob([JSON.stringify(reminders, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'reminders-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function restoreBackup(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const restored = JSON.parse(reader.result);
+        if (!Array.isArray(restored)) throw new Error('Not a valid backup file');
+        reminders = mergeReminders(reminders, restored);
+        save();
+        render();
+      } catch (e) {
+        alert('Could not read that backup file: ' + e.message);
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  function beep() {
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = 'sine'; o.frequency.value = 880; g.gain.value = 0.001;
+      o.connect(g); g.connect(audioCtx.destination);
+      const t = audioCtx.currentTime;
+      g.gain.exponentialRampToValueAtTime(0.15, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+      o.start(t); o.stop(t + 0.4);
+    } catch (e) {}
+  }
+
+  function notifyOS(r) {
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'granted') {
+      try { new Notification(r.title, { body: 'Reminder due — priority ' + (r.priority || 3) }); } catch (e) {}
+    }
+  }
+
+  function checkDue() {
+    const now = Date.now();
+    let newlyFired = false;
+    let newlyFiredReminders = [];
+    reminders.forEach(r => {
+      if (r.done || !r.when) return;
+      const due = new Date(r.when).getTime();
+      if (isNaN(due) || due > now) return;
+      if (r.suppressedUntil === r.when) return;
+      if (!alarmQueue.includes(r.id)) {
+        alarmQueue.push(r.id);
+        newlyFired = true;
+        newlyFiredReminders.push(r);
+      }
+    });
+    alarmQueue.sort((idA, idB) => {
+      const a = reminders.find(r => r.id === idA);
+      const b = reminders.find(r => r.id === idB);
+      if (!a || !b) return 0;
+      return (a.priority - b.priority) || (new Date(a.when) - new Date(b.when));
+    });
+    if (newlyFired) {
+      beep();
+      newlyFiredReminders.forEach(notifyOS);
+    }
+    render();
+  }
+
+  function snoozeCurrent(minutes) {
+    const id = alarmQueue[0];
+    const r = reminders.find(r => r.id === id);
+    if (r) { r.when = new Date(Date.now() + minutes * 60000).toISOString(); r.suppressedUntil = null; save(); }
+    alarmQueue.shift(); render();
+  }
+  function dismissCurrent() {
+    const id = alarmQueue[0];
+    const r = reminders.find(r => r.id === id);
+    if (r) { r.suppressedUntil = r.when; save(); }
+    alarmQueue.shift(); render();
+  }
+  function completeCurrent() {
+    const id = alarmQueue[0];
+    const r = reminders.find(r => r.id === id);
+    if (r) { r.done = true; save(); }
+    alarmQueue.shift(); render();
+  }
+
+  function sortActive(list) {
+    const due = list.filter(isDue);
+    const notDue = list.filter(r => !isDue(r));
+    due.sort((a, b) => (a.priority - b.priority) || (new Date(a.when) - new Date(b.when)));
+    notDue.sort((a, b) => {
+      const at = a.when ? new Date(a.when).getTime() : Infinity;
+      const bt = b.when ? new Date(b.when).getTime() : Infinity;
+      return at - bt;
+    });
+    return [...due, ...notDue];
+  }
+
+  /* =========================================================
+     RENDER
+     ========================================================= */
+  function render() {
+    const titleField = document.getElementById('new-title');
+    const wasFocused = document.activeElement === titleField;
+    const savedTitleValue = titleField ? titleField.value : '';
+    const savedCaret = titleField ? titleField.selectionStart : null;
+
+    const searchField = document.getElementById('search-input');
+    const searchWasFocused = document.activeElement === searchField;
+    const savedSearchCaret = searchField ? searchField.selectionStart : null;
+
+    const active = sortActive(reminders.filter(r => !r.done && matchesSearch(r)));
+    const done = reminders.filter(r => r.done && matchesSearch(r));
+    const totalActiveCount = reminders.filter(r => !r.done).length;
+
+    root.innerHTML = `
+      <div class="header">
+        <h1>Reminders</h1>
+        <div class="header-right">
+          <span class="count">${totalActiveCount} active</span>
+          <button class="pill-btn settings-toggle" id="settings-toggle">${showSettings ? 'Close' : 'Sync'}</button>
+          ${reminders.length ? `<button class="pill-btn select-toggle" id="select-toggle">${selectMode ? 'Cancel' : 'Select'}</button>` : ''}
+        </div>
+      </div>
+      <p class="subtitle">A quiet place to keep track of what's next.</p>
+      ${renderSyncStatus()}
+      ${showSettings ? renderSettings() : ''}
+
+      ${reminders.length ? `
+      <div class="search-bar">
+        <input type="text" id="search-input" placeholder="Search reminders..." value="${escapeHtml(searchQuery)}" />
+        ${searchQuery ? `<button class="search-clear" id="search-clear">Clear</button>` : ''}
+      </div>
+      <div class="priority-filter">
+        <span class="priority-filter-label">Select by priority</span>
+        ${[1,2,3,4,5].map(p => `<button class="priority-filter-chip" data-p="${p}" data-filter-priority="${p}" title="Select all priority ${p}"></button>`).join('')}
+      </div>` : ''}
+
+      ${!selectMode ? `
+      <div class="add-form">
+        <input type="text" id="new-title" placeholder="Remind me to..." value="${escapeHtml(savedTitleValue)}" />
+        <div class="add-row">
+          <input type="datetime-local" id="new-time" value="${nowLocalInputValue()}" />
+          <button class="add-btn" id="add-btn">Add</button>
+        </div>
+      </div>` : ''}
+
+      ${!loaded ? '<div class="empty-state">Loading...</div>' : renderLists(active, done)}
+
+      ${selectMode && selectedIds.size > 0 ? renderBulkBar() : ''}
+      ${alarmQueue.length ? renderAlarm() : ''}
+      ${showDeleteConfirm ? renderDeleteConfirm() : ''}
+    `;
+
+    wireEvents();
+
+    if (wasFocused) {
+      const el = document.getElementById('new-title');
+      if (el) { el.focus(); if (savedCaret !== null) el.setSelectionRange(savedCaret, savedCaret); }
+    }
+    if (searchWasFocused) {
+      const el = document.getElementById('search-input');
+      if (el) { el.focus(); if (savedSearchCaret !== null) el.setSelectionRange(savedSearchCaret, savedSearchCaret); }
+    }
+  }
+
+  function renderSyncStatus() {
+    let label, cls;
+    if (!clientId) { label = 'Drive sync not set up — tap "Sync"'; cls = ''; }
+    else if (!accessToken) { label = 'Drive not connected — tap "Sync"'; cls = ''; }
+    else if (driveStatus === 'syncing' || driveStatus === 'connecting') { label = 'Syncing with Drive…'; cls = 'on'; }
+    else if (driveStatus === 'synced') { label = 'Synced with Google Drive'; cls = 'on'; }
+    else if (driveStatus === 'error') { label = 'Drive sync error: ' + escapeHtml(driveError); cls = 'err'; }
+    else { label = 'Drive connected'; cls = 'on'; }
+    return `<div class="sync-status"><span class="sync-dot ${cls}"></span>${label}</div>`;
+  }
+
+  function renderSettings() {
+    const originNote = location.protocol === 'file:'
+      ? `<p style="color:var(--ember);"><strong>Heads up:</strong> this page is open as a local file (file://). Google sign-in will not work here — host this file on a real address (e.g. GitHub Pages) first, then open it that way on both devices.</p>`
+      : `<p>Signed in from: <code>${escapeHtml(location.origin)}</code> — make sure this exact address is listed under "Authorized JavaScript origins" for your OAuth Client ID.</p>`;
+    return `
+      <div class="settings-panel">
+        <h2>Google Drive sync</h2>
+        <p>Paste your Google OAuth Client ID below (one-time setup, from Google Cloud Console). This lets the app save your reminders to a private file it creates in your own Drive, and read it back on any device you open this page from.</p>
+        ${originNote}
+        <label for="client-id-input">OAuth Client ID</label>
+        <input type="text" id="client-id-input" placeholder="xxxxxxxx.apps.googleusercontent.com" value="${escapeHtml(clientId)}" />
+        <div class="settings-row">
+          <button class="settings-btn" id="save-client-id">Save Client ID</button>
+          ${accessToken
+            ? `<button class="settings-btn secondary" id="disconnect-drive">Disconnect</button><button class="settings-btn secondary" id="sync-now">Sync now</button>`
+            : `<button class="settings-btn secondary" id="connect-drive">Connect Google Drive</button>`
+          }
+        </div>
+        <p style="margin-top:16px; border-top:1px solid var(--line); padding-top:14px;"><strong>Local backup</strong> — if you're opening this file directly from disk (not a hosted URL), your browser may not reliably keep data between sessions. Download a backup after adding reminders, and restore it any time.</p>
+        <div class="settings-row">
+          <button class="settings-btn secondary" id="download-backup">Download backup (.json)</button>
+          <button class="settings-btn secondary" id="restore-backup-btn">Restore from backup</button>
+          <input type="file" id="restore-backup-input" accept=".json" style="display:none;" />
+        </div>
+      </div>
+    `;
+  }
+
+  function renderLists(active, done) {
+    if (active.length === 0 && done.length === 0) {
+      if (searchQuery.trim()) {
+        return `<div class="empty-state"><div class="glyph">&#9684;</div>No reminders match "${escapeHtml(searchQuery)}".</div>`;
+      }
+      return `<div class="empty-state"><div class="glyph">&#9684;</div>Nothing on your list yet.<br/>Add your first reminder above.</div>`;
+    }
+    let html = '';
+    if (active.length) html += `<div class="reminder-list">${active.map(renderItem).join('')}</div>`;
+    if (done.length) {
+      html += `<div class="section-label">Completed</div>`;
+      html += `<div class="reminder-list">${done.map(renderItem).join('')}</div>`;
+    }
+    return html;
+  }
+
+  function renderItem(r) {
+    const picked = selectedIds.has(r.id);
+    const priority = r.priority || 3;
+    const due = isDue(r);
+    return `
+      <div class="reminder p${priority} ${r.done ? 'done' : ''} ${picked ? 'picked' : ''}">
+        ${selectMode
+          ? `<div class="pick-box ${picked ? 'checked' : ''}" data-pick="${r.id}">${picked ? checkIcon() : ''}</div>`
+          : `<div class="check ${r.done ? 'checked' : ''}" data-id="${r.id}">${checkIcon()}</div>`
+        }
+        <div class="reminder-body">
+          <p class="reminder-title">${escapeHtml(r.title)}</p>
+          <div class="reminder-time">${fmtTime(r.when)}${(!r.done && r.when && !due) ? ' <span class="not-due-tag">&middot; upcoming</span>' : ''}</div>
+          ${!selectMode ? `
+          <div class="priority-row">
+            <span class="priority-label">Priority</span>
+            ${[1,2,3,4,5].map(p => `<button class="priority-dot ${priority === p ? 'checked' : ''}" data-p="${p}" data-priority-id="${r.id}" title="Priority ${p}"></button>`).join('')}
+          </div>` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderBulkBar() {
+    const tomorrow9 = new Date();
+    tomorrow9.setDate(tomorrow9.getDate() + 1);
+    tomorrow9.setHours(9, 0, 0, 0);
+    const in1h = nowLocalInputValue(60 * 60000);
+    return `
+      <div class="bulk-bar">
+        <div class="bulk-row1"><span class="bulk-count">${selectedIds.size} selected</span><button class="bulk-cancel" id="bulk-cancel">Clear</button></div>
+        <p class="snooze-label" style="margin:0;">Snooze all for</p>
+        <div class="snooze-grid">
+          <button class="snooze-btn" data-bulk-snooze="5">5m</button>
+          <button class="snooze-btn" data-bulk-snooze="10">10m</button>
+          <button class="snooze-btn" data-bulk-snooze="15">15m</button>
+          <button class="snooze-btn" data-bulk-snooze="30">30m</button>
+          <button class="snooze-btn" data-bulk-snooze="60">1h</button>
+          <button class="snooze-btn" data-bulk-snooze="120">2h</button>
+          <button class="snooze-btn" data-bulk-snooze="300">5h</button>
+        </div>
+        <p class="snooze-label" style="margin:10px 0 0;">Or set an exact time</p>
+        <div class="bulk-chips">
+          <button class="bulk-chip" data-preset="${in1h}">In 1 hour</button>
+          <button class="bulk-chip" data-preset="${nowLocalInputValue(24*60*60000)}">Same time tomorrow</button>
+          <button class="bulk-chip" data-preset="${tomorrow9.getFullYear() + '-' + pad(tomorrow9.getMonth()+1) + '-' + pad(tomorrow9.getDate()) + 'T09:00'}">Tomorrow, 9 AM</button>
+          <button class="bulk-chip" id="bulk-reopen">Mark not completed</button>
+          <button class="bulk-chip" id="bulk-export">Export to Excel</button>
+          <button class="bulk-delete" id="bulk-delete">Delete selected</button>
+        </div>
+        <div class="bulk-row2">
+          <input type="datetime-local" id="bulk-time" value="${nowLocalInputValue()}" />
+          <button class="bulk-apply" id="bulk-apply">Apply</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderDeleteConfirm() {
+    return `
+      <div class="alarm-overlay">
+        <div class="alarm-card">
+          <div class="alarm-glyph" style="background:var(--ember-soft); color:var(--ember);">&#9888;</div>
+          <p class="alarm-title">Delete ${pendingDeleteIds.size} reminder${pendingDeleteIds.size === 1 ? '' : 's'}?</p>
+          <p class="alarm-time">This can't be undone.</p>
+          <div class="alarm-actions">
+            <button class="alarm-done-btn" id="confirm-delete-btn" style="background:var(--ember);">Delete</button>
+            <button class="alarm-dismiss-btn" id="cancel-delete-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderAlarm() {
+    const r = reminders.find(r => r.id === alarmQueue[0]);
+    if (!r) return '';
+    const priority = r.priority || 3;
+    return `
+      <div class="alarm-overlay">
+        <div class="alarm-card">
+          <div class="alarm-glyph">&#9200;</div>
+          <p class="alarm-title">${escapeHtml(r.title)}</p>
+          <p class="alarm-time">Was due ${fmtTime(r.when)}</p>
+          <div class="alarm-actions">
+            <button class="alarm-done-btn" id="alarm-complete">Mark done</button>
+            <button class="alarm-dismiss-btn" id="alarm-dismiss">Dismiss</button>
+          </div>
+          <p class="snooze-label">Priority</p>
+          <div class="priority-row" style="justify-content:center; margin-top:0 0 16px;">
+            ${[1,2,3,4,5].map(p => `<button class="priority-dot ${priority === p ? 'checked' : ''}" data-p="${p}" data-alarm-priority-id="${r.id}" title="Priority ${p}"></button>`).join('')}
+          </div>
+          <p class="snooze-label">Snooze for</p>
+          <div class="snooze-grid">
+            <button class="snooze-btn" data-snooze="5">5m</button>
+            <button class="snooze-btn" data-snooze="10">10m</button>
+            <button class="snooze-btn" data-snooze="15">15m</button>
+            <button class="snooze-btn" data-snooze="30">30m</button>
+            <button class="snooze-btn" data-snooze="60">1h</button>
+            <button class="snooze-btn" data-snooze="120">2h</button>
+            <button class="snooze-btn" data-snooze="300">5h</button>
+          </div>
+          ${alarmQueue.length > 1 ? `<p class="queue-note">${alarmQueue.length - 1} more waiting</p>` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  function wireEvents() {
+    const selectToggle = document.getElementById('select-toggle');
+    if (selectToggle) selectToggle.addEventListener('click', toggleSelectMode);
+
+    const settingsToggle = document.getElementById('settings-toggle');
+    if (settingsToggle) settingsToggle.addEventListener('click', () => { showSettings = !showSettings; render(); });
+
+    const titleInput = document.getElementById('new-title');
+    const timeInput = document.getElementById('new-time');
+    const addBtn = document.getElementById('add-btn');
+    if (addBtn) {
+      function handleAdd() {
+        const title = titleInput.value.trim();
+        if (!title) return;
+        addReminder(title, timeInput.value ? new Date(timeInput.value).toISOString() : null);
+      }
+      addBtn.addEventListener('click', handleAdd);
+      titleInput.addEventListener('keydown', e => { if (e.key === 'Enter') handleAdd(); });
+      // request notification permission on first interaction
+      titleInput.addEventListener('focus', () => {
+        if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+      }, { once: true });
+    }
+
+    document.querySelectorAll('.check').forEach(el => el.addEventListener('click', () => toggleDone(el.dataset.id)));
+    document.querySelectorAll('[data-pick]').forEach(el => el.addEventListener('click', () => togglePick(el.dataset.pick)));
+    document.querySelectorAll('[data-priority-id]').forEach(el => el.addEventListener('click', () => setPriority(el.dataset.priorityId, parseInt(el.dataset.p, 10))));
+    document.querySelectorAll('[data-alarm-priority-id]').forEach(el => el.addEventListener('click', () => setPriority(el.dataset.alarmPriorityId, parseInt(el.dataset.p, 10))));
+
+    const bulkCancel = document.getElementById('bulk-cancel');
+    if (bulkCancel) bulkCancel.addEventListener('click', () => { selectedIds.clear(); render(); });
+    const bulkDelete = document.getElementById('bulk-delete');
+    if (bulkDelete) bulkDelete.addEventListener('click', deleteBulk);
+    const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+    if (confirmDeleteBtn) confirmDeleteBtn.addEventListener('click', confirmDelete);
+    const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
+    if (cancelDeleteBtn) cancelDeleteBtn.addEventListener('click', cancelDelete);
+    const bulkReopen = document.getElementById('bulk-reopen');
+    if (bulkReopen) bulkReopen.addEventListener('click', bulkMarkIncomplete);
+    const bulkExport = document.getElementById('bulk-export');
+    if (bulkExport) bulkExport.addEventListener('click', exportSelectedToExcel);
+    const bulkApply = document.getElementById('bulk-apply');
+    const bulkTime = document.getElementById('bulk-time');
+    if (bulkApply) bulkApply.addEventListener('click', () => applyBulkTime(bulkTime.value));
+    document.querySelectorAll('.bulk-chip').forEach(el => el.addEventListener('click', () => applyBulkTime(el.dataset.preset)));
+    document.querySelectorAll('[data-bulk-snooze]').forEach(el => el.addEventListener('click', () => applyBulkSnooze(parseInt(el.dataset.bulkSnooze, 10))));
+
+    const alarmComplete = document.getElementById('alarm-complete');
+    if (alarmComplete) alarmComplete.addEventListener('click', completeCurrent);
+    const alarmDismiss = document.getElementById('alarm-dismiss');
+    if (alarmDismiss) alarmDismiss.addEventListener('click', dismissCurrent);
+    document.querySelectorAll('[data-snooze]').forEach(el => el.addEventListener('click', () => snoozeCurrent(parseInt(el.dataset.snooze, 10))));
+
+    const saveClientIdBtn = document.getElementById('save-client-id');
+    if (saveClientIdBtn) saveClientIdBtn.addEventListener('click', () => {
+      const val = document.getElementById('client-id-input').value.trim();
+      clientId = val;
+      localStorage.setItem(CLIENT_ID_KEY, val);
+      tokenClient = null;
+      render();
+    });
+    const connectBtn = document.getElementById('connect-drive');
+    if (connectBtn) connectBtn.addEventListener('click', connectDrive);
+    const disconnectBtn = document.getElementById('disconnect-drive');
+    if (disconnectBtn) disconnectBtn.addEventListener('click', disconnectDrive);
+    const syncNowBtn = document.getElementById('sync-now');
+    if (syncNowBtn) syncNowBtn.addEventListener('click', pushToDrive);
+    const downloadBackupBtn = document.getElementById('download-backup');
+    if (downloadBackupBtn) downloadBackupBtn.addEventListener('click', downloadBackup);
+    const restoreBackupBtn = document.getElementById('restore-backup-btn');
+    const restoreBackupInput = document.getElementById('restore-backup-input');
+    if (restoreBackupBtn && restoreBackupInput) {
+      restoreBackupBtn.addEventListener('click', () => restoreBackupInput.click());
+      restoreBackupInput.addEventListener('change', () => {
+        if (restoreBackupInput.files[0]) restoreBackup(restoreBackupInput.files[0]);
+      });
+    }
+
+    const searchInput = document.getElementById('search-input');
+    if (searchInput) {
+      searchInput.addEventListener('input', () => { searchQuery = searchInput.value; render(); });
+    }
+    const searchClear = document.getElementById('search-clear');
+    if (searchClear) searchClear.addEventListener('click', () => { searchQuery = ''; render(); });
+    document.querySelectorAll('[data-filter-priority]').forEach(el => {
+      el.addEventListener('click', () => selectByPriority(parseInt(el.dataset.filterPriority, 10)));
+    });
+  }
+
+  /* =========================================================
+     BOOT
+     ========================================================= */
+  loadLocal();
+  render();
+  setInterval(checkDue, 10000);
+  checkDue();
+})();
+</script>
+</body>
+</html>
