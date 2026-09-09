@@ -788,6 +788,8 @@
 
   function confirmDelete() {
     reminders = reminders.filter(r => !pendingDeleteIds.has(r.id));
+    alarmQueue = alarmQueue.filter(id => !pendingDeleteIds.has(id));
+    if (editingId && pendingDeleteIds.has(editingId)) editingId = null;
     save();
     showDeleteConfirm = false;
     pendingDeleteIds = new Set();
@@ -799,6 +801,27 @@
   function cancelDelete() {
     showDeleteConfirm = false;
     pendingDeleteIds = new Set();
+    render();
+  }
+  function deleteFromAlarm() {
+    const id = alarmQueue[0];
+    if (!id) return;
+    pendingDeleteIds = new Set([id]);
+    showDeleteConfirm = true;
+    render();
+  }
+  function editFromAlarm() {
+    const id = alarmQueue[0];
+    if (!id) return;
+    const r = reminders.find(r => r.id === id);
+    if (r) { r.suppressedUntil = r.when; r.updated = Date.now(); save(); }
+    alarmQueue.shift();
+    editingId = id;
+    render();
+  }
+  function deleteFromEdit(id) {
+    pendingDeleteIds = new Set([id]);
+    showDeleteConfirm = true;
     render();
   }
 
@@ -1121,6 +1144,7 @@
             <div class="edit-actions" style="margin-top:10px;">
               <button class="edit-save-btn" data-save-edit="${r.id}">Save</button>
               <button class="edit-cancel-btn" data-cancel-edit="${r.id}">Cancel</button>
+              <button class="edit-cancel-btn" data-delete-from-edit="${r.id}" style="background:var(--ember-soft); color:var(--ember);">Delete</button>
             </div>
           </div>
         </div>
@@ -1249,6 +1273,10 @@
             <button class="alarm-done-btn" id="alarm-complete">Mark done</button>
             <button class="alarm-dismiss-btn" id="alarm-dismiss">Dismiss</button>
           </div>
+          <div class="alarm-actions" style="margin-bottom:14px;">
+            <button class="alarm-dismiss-btn" id="alarm-edit" style="flex:1;">Edit</button>
+            <button class="alarm-dismiss-btn" id="alarm-delete" style="flex:1;">Delete</button>
+          </div>
           <p class="snooze-label">Priority</p>
           <div class="priority-row" style="justify-content:center; margin-top:0 0 16px;">
             ${[1,2,3,4,5].map(p => priorityDotHtml(p, priority === p, `data-alarm-priority-id="${r.id}"`)).join('')}
@@ -1308,6 +1336,7 @@
     document.querySelectorAll('[data-edit-bump]').forEach(el => el.addEventListener('click', () => { bumpEditTime(el.dataset.editBump, parseInt(el.dataset.minutes, 10)); markSnoozeSelected(el); }));
     document.querySelectorAll('[data-edit-bump-abs]').forEach(el => el.addEventListener('click', () => { bumpEditTimeAbsolute(el.dataset.editBumpAbs, parseInt(el.dataset.hour, 10)); markSnoozeSelected(el); }));
     document.querySelectorAll('[data-cancel-edit]').forEach(el => el.addEventListener('click', cancelEdit));
+    document.querySelectorAll('[data-delete-from-edit]').forEach(el => el.addEventListener('click', () => deleteFromEdit(el.dataset.deleteFromEdit)));
     document.querySelectorAll('[data-save-edit]').forEach(el => el.addEventListener('click', () => {
       const id = el.dataset.saveEdit;
       const titleEl = document.getElementById('edit-title-' + id);
@@ -1338,6 +1367,10 @@
     if (alarmComplete) alarmComplete.addEventListener('click', completeCurrent);
     const alarmDismiss = document.getElementById('alarm-dismiss');
     if (alarmDismiss) alarmDismiss.addEventListener('click', dismissCurrent);
+    const alarmDelete = document.getElementById('alarm-delete');
+    if (alarmDelete) alarmDelete.addEventListener('click', deleteFromAlarm);
+    const alarmEdit = document.getElementById('alarm-edit');
+    if (alarmEdit) alarmEdit.addEventListener('click', editFromAlarm);
     document.querySelectorAll('[data-snooze]').forEach(el => el.addEventListener('click', () => snoozeCurrent(parseInt(el.dataset.snooze, 10))));
     document.querySelectorAll('[data-snooze-abs]').forEach(el => el.addEventListener('click', () => snoozeCurrentAbsolute(parseInt(el.dataset.snoozeAbs, 10))));
 
