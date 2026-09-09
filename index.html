@@ -19,7 +19,7 @@
     --gold: #4A67A1;
     --line: #d6e4e2;
     --muted: rgba(0,0,0,0.55);
-    --done-bg: #eef8f7;
+    --done-bg: #eef8f7;a
     --select: #4A67A1;
     --select-soft: #e5eaf3;
     --p1: #c0392b;
@@ -785,6 +785,11 @@
     selectedIds.clear(); liveBulkTime = null;
     render();
   }
+  function selectAllVisible() {
+    const visible = reminders.filter(matchesFilters);
+    selectedIds = new Set(visible.map(r => r.id));
+    render();
+  }
   function applyBulkSnooze(minutes) {
     const target = new Date(Date.now() + minutes * 60000).toISOString();
     reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); } });
@@ -1069,6 +1074,7 @@
           <button class="pill-btn settings-toggle" id="settings-toggle">${showSettings ? 'Close' : 'Sync'}</button>
           <button class="pill-btn alerts-toggle ${alertsPaused ? 'paused' : ''}" id="alerts-toggle" title="${alertsPaused ? 'Alerts paused — tap to resume' : 'Alerts on — tap to pause'}">${alertsPaused ? '\ud83d\udd15 Paused' : '\ud83d\udd14 Alerts'}</button>
           ${reminders.length ? `<button class="pill-btn select-toggle" id="select-toggle">${selectMode ? 'Cancel' : 'Select'}</button>` : ''}
+          ${selectMode ? `<button class="pill-btn select-toggle" id="select-all-btn">Select all</button>` : ''}
         </div>
       </div>
       <p class="subtitle">A quiet place to keep track of what's next.</p>
@@ -1370,6 +1376,8 @@
   function wireEvents() {
     const selectToggle = document.getElementById('select-toggle');
     if (selectToggle) selectToggle.addEventListener('click', toggleSelectMode);
+    const selectAllBtn = document.getElementById('select-all-btn');
+    if (selectAllBtn) selectAllBtn.addEventListener('click', selectAllVisible);
 
     const settingsToggle = document.getElementById('settings-toggle');
     if (settingsToggle) settingsToggle.addEventListener('click', () => { showSettings = !showSettings; render(); });
