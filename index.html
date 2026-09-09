@@ -370,6 +370,7 @@
   let editingId = null;
   let liveEditTitle = null;
   let liveEditTime = null;
+  let liveBulkTime = null;
   let showAddPopup = false;
   let addPriority = 1;
   let addAnchorTime = null;
@@ -781,27 +782,27 @@
   }
   function toggleSelectMode() {
     selectMode = !selectMode;
-    selectedIds.clear();
+    selectedIds.clear(); liveBulkTime = null;
     render();
   }
   function applyBulkSnooze(minutes) {
     const target = new Date(Date.now() + minutes * 60000).toISOString();
     reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); } });
-    save(); selectMode = false; selectedIds.clear(); render();
+    save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; render();
   }
   function applyBulkSnoozeAbsolute(hour) {
     const target = nextOccurrenceISO(hour);
     reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); } });
-    save(); selectMode = false; selectedIds.clear(); render();
+    save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; render();
   }
   function applyBulkTime(iso) {
     if (!iso) return;
     reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = new Date(iso).toISOString(); r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); } });
-    save(); selectMode = false; selectedIds.clear(); render();
+    save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; render();
   }
   function bulkMarkIncomplete() {
     reminders.forEach(r => { if (selectedIds.has(r.id)) { r.done = false; r.completedAt = null; r.updated = Date.now(); } });
-    save(); selectMode = false; selectedIds.clear(); render();
+    save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; render();
   }
   function deleteBulk() {
     pendingDeleteIds = new Set(selectedIds);
@@ -817,7 +818,7 @@
     showDeleteConfirm = false;
     pendingDeleteIds = new Set();
     selectMode = false;
-    selectedIds.clear();
+    selectedIds.clear(); liveBulkTime = null;
     render();
   }
 
@@ -1050,6 +1051,11 @@
     const editTimeField = editingId ? document.getElementById('edit-time-' + editingId) : null;
     liveEditTime = editTimeField ? editTimeField.value : null;
 
+    // Same protection for the bulk-reschedule time picker.
+    const bulkTimeField = document.getElementById('bulk-time');
+    const bulkTimeFocused = document.activeElement === bulkTimeField;
+    liveBulkTime = bulkTimeField ? bulkTimeField.value : null;
+
     const active = sortList(reminders.filter(r => !r.done && matchesFilters(r)));
     const done = sortList(reminders.filter(r => r.done && matchesFilters(r)));
     const totalActiveCount = reminders.filter(r => !r.done).length;
@@ -1113,6 +1119,10 @@
     if (editTitleFocused) {
       const el = document.getElementById('edit-title-' + editingId);
       if (el) { el.focus(); if (editTitleCaret !== null) el.setSelectionRange(editTitleCaret, editTitleCaret); }
+    }
+    if (bulkTimeFocused) {
+      const el = document.getElementById('bulk-time');
+      if (el) el.focus();
     }
   }
 
@@ -1258,7 +1268,7 @@
           <button class="bulk-delete" id="bulk-delete">Delete selected</button>
         </div>
         <div class="bulk-row2">
-          <input type="datetime-local" id="bulk-time" value="${nowLocalInputValue()}" />
+          <input type="datetime-local" id="bulk-time" value="${liveBulkTime !== null ? liveBulkTime : nowLocalInputValue()}" />
           <button class="bulk-apply" id="bulk-apply">Apply</button>
         </div>
       </div>
@@ -1401,7 +1411,7 @@
     }));
 
     const bulkCancel = document.getElementById('bulk-cancel');
-    if (bulkCancel) bulkCancel.addEventListener('click', () => { selectedIds.clear(); render(); });
+    if (bulkCancel) bulkCancel.addEventListener('click', () => { selectedIds.clear(); liveBulkTime = null; render(); });
     const bulkDelete = document.getElementById('bulk-delete');
     if (bulkDelete) bulkDelete.addEventListener('click', deleteBulk);
     const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
