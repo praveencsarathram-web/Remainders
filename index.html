@@ -19,7 +19,7 @@
     --gold: #4A67A1;
     --line: #d6e4e2;
     --muted: rgba(0,0,0,0.55);
-    --done-bg: #eef8f7;a
+    --done-bg: #eef8f7;
     --select: #4A67A1;
     --select-soft: #e5eaf3;
     --p1: #c0392b;
@@ -790,6 +790,15 @@
     selectedIds = new Set(visible.map(r => r.id));
     render();
   }
+  function deselectAllAndReset() {
+    selectedIds.clear();
+    liveBulkTime = null;
+    searchQuery = '';
+    priorityFilter = null;
+    dateFilterMode = 'all';
+    selectMode = false;
+    render();
+  }
   function applyBulkSnooze(minutes) {
     const target = new Date(Date.now() + minutes * 60000).toISOString();
     reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); } });
@@ -1075,6 +1084,7 @@
           <button class="pill-btn alerts-toggle ${alertsPaused ? 'paused' : ''}" id="alerts-toggle" title="${alertsPaused ? 'Alerts paused — tap to resume' : 'Alerts on — tap to pause'}">${alertsPaused ? '\ud83d\udd15 Paused' : '\ud83d\udd14 Alerts'}</button>
           ${reminders.length ? `<button class="pill-btn select-toggle" id="select-toggle">${selectMode ? 'Cancel' : 'Select'}</button>` : ''}
           ${selectMode ? `<button class="pill-btn select-toggle" id="select-all-btn">Select all</button>` : ''}
+          ${selectMode ? `<button class="pill-btn select-toggle" id="deselect-all-btn">Deselect all</button>` : ''}
         </div>
       </div>
       <p class="subtitle">A quiet place to keep track of what's next.</p>
@@ -1378,6 +1388,8 @@
     if (selectToggle) selectToggle.addEventListener('click', toggleSelectMode);
     const selectAllBtn = document.getElementById('select-all-btn');
     if (selectAllBtn) selectAllBtn.addEventListener('click', selectAllVisible);
+    const deselectAllBtn = document.getElementById('deselect-all-btn');
+    if (deselectAllBtn) deselectAllBtn.addEventListener('click', deselectAllAndReset);
 
     const settingsToggle = document.getElementById('settings-toggle');
     if (settingsToggle) settingsToggle.addEventListener('click', () => { showSettings = !showSettings; render(); });
