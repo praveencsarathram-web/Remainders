@@ -1,30 +1,33 @@
-<!DOCTYPE html>
+a<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Reminders</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
 <style>
   :root {
-    --ink: #1c1a17;
-    --paper: #faf7f2;
+    --ink: #000000;
+    --paper: #ffffff;
     --card: #ffffff;
-    --ember: #c4502d;
-    --ember-soft: #f4ded4;
-    --gold: #b8860f;
-    --line: #e8e2d8;
-    --muted: #948b7d;
-    --done-bg: #f1efe9;
-    --select: #2c6e5e;
-    --select-soft: #dcece6;
+    --ember: #36C1B3;
+    --ember-soft: #e0f7f4;
+    --gold: #4A67A1;
+    --line: #d6e4e2;
+    --muted: rgba(0,0,0,0.55);
+    --done-bg: #eef8f7;
+    --select: #4A67A1;
+    --select-soft: #e5eaf3;
     --p1: #c0392b;
     --p2: #d9730d;
     --p3: #c9a227;
     --p4: #3f8f5f;
     --p5: #4472a8;
-    font-family: 'Georgia', 'Iowan Old Style', serif;
+    font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: var(--paper); }
@@ -40,13 +43,15 @@
     position: relative;
   }
 
+  .brand-logo { margin-bottom: 14px; }
+  .brand-logo img { height: 34px; width: auto; display: block; }
   .header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
   .header h1 { font-size: 28px; font-weight: 400; letter-spacing: 0.2px; margin: 0; }
   .header-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-  .header .count { font-family: -apple-system, system-ui, sans-serif; font-size: 13px; color: var(--muted); }
+  .header .count { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 13px; color: var(--muted); }
 
   .pill-btn {
-    font-family: -apple-system, system-ui, sans-serif;
+    font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
     font-size: 12.5px;
     border: none;
     border-radius: 20px;
@@ -59,10 +64,10 @@
   .alerts-toggle { color: var(--ink); background: var(--line); }
   .alerts-toggle.paused { color: white; background: var(--ember); }
 
-  .subtitle { font-family: -apple-system, system-ui, sans-serif; font-size: 13px; color: var(--muted); margin: 0 0 16px; }
+  .subtitle { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 13px; color: var(--muted); margin: 0 0 16px; }
 
   .sync-status {
-    font-family: -apple-system, system-ui, sans-serif;
+    font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
     font-size: 11.5px;
     color: var(--muted);
     margin: -6px 0 18px;
@@ -80,41 +85,56 @@
     border-radius: 14px;
     padding: 16px;
     margin-bottom: 22px;
-    font-family: -apple-system, system-ui, sans-serif;
+    font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
   }
-  .settings-panel h2 { font-family: 'Georgia', serif; font-size: 17px; margin: 0 0 8px; font-weight: 400; }
+  .settings-panel h2 { font-family: 'IBM Plex Sans', sans-serif; font-size: 17px; margin: 0 0 8px; font-weight: 400; }
   .settings-panel p { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin: 0 0 10px; }
   .settings-panel label { font-size: 12px; color: var(--ink); display: block; margin-bottom: 4px; font-weight: 600; }
   .settings-panel input[type="text"] {
     width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px;
-    font-size: 13px; font-family: -apple-system, system-ui, sans-serif; margin-bottom: 12px; background: var(--paper); color: var(--ink);
+    font-size: 13px; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; margin-bottom: 12px; background: var(--paper); color: var(--ink);
   }
   .settings-row { display: flex; gap: 8px; flex-wrap: wrap; }
   .settings-btn {
     background: var(--ember); color: white; border: none; border-radius: 8px;
-    padding: 9px 14px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: -apple-system, system-ui, sans-serif;
+    padding: 9px 14px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
   }
   .settings-btn.secondary { background: var(--line); color: var(--ink); }
   .settings-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .add-form { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 26px; }
   .add-form input[type="text"] {
-    width: 100%; border: none; outline: none; font-family: 'Georgia', serif; font-size: 16px; color: var(--ink);
+    width: 100%; border: none; outline: none; font-family: 'IBM Plex Sans', sans-serif; font-size: 16px; color: var(--ink);
     background: transparent; padding: 4px 2px 12px; border-bottom: 1px solid var(--line); margin-bottom: 12px;
   }
   .add-form input[type="text"]::placeholder { color: #b7ae9f; }
-  .add-row { display: flex; gap: 10px; align-items: center; font-family: -apple-system, system-ui, sans-serif; }
+  .add-row { display: flex; gap: 10px; align-items: center; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; }
   .add-row input[type="datetime-local"] {
     flex: 1; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px;
-    color: var(--ink); background: var(--paper); font-family: -apple-system, system-ui, sans-serif;
+    color: var(--ink); background: var(--paper); font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
   }
   .add-btn {
     background: var(--ember); color: white; border: none; border-radius: 8px; padding: 9px 16px; font-size: 13px;
-    font-weight: 600; cursor: pointer; font-family: -apple-system, system-ui, sans-serif; white-space: nowrap;
+    font-weight: 600; cursor: pointer; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; white-space: nowrap;
   }
-  .add-btn:active { background: #a3401f; }
+  .add-btn:active { background: #2ea89c; }
 
-  .section-label { font-family: -apple-system, system-ui, sans-serif; font-size: 12px; color: var(--muted); margin: 22px 0 10px 4px; }
+  .add-trigger-btn {
+    width: 100%;
+    background: var(--ember);
+    color: white;
+    border: none;
+    border-radius: 14px;
+    padding: 14px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: 'IBM Plex Sans', sans-serif;
+    margin-bottom: 26px;
+  }
+  .add-trigger-btn:active { background: #2ea89c; }
+
+  .section-label { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 12px; color: var(--muted); margin: 22px 0 10px 4px; }
   .reminder-list { display: flex; flex-direction: column; gap: 8px; }
   .reminder {
     display: flex; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--line);
@@ -135,24 +155,16 @@
   .reminder-body { flex: 1; min-width: 0; }
   .reminder-title { font-size: 15.5px; color: var(--ink); margin: 0; line-height: 1.3; }
   .reminder.done .reminder-title { color: var(--muted); text-decoration: line-through; }
-  .reminder-time { font-family: -apple-system, system-ui, sans-serif; font-size: 11.5px; color: var(--gold); margin-top: 2px; }
+  .reminder-time { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 11.5px; color: var(--gold); margin-top: 2px; }
   .reminder.done .reminder-time { color: var(--muted); }
 
   .priority-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
-  .priority-label { font-family: -apple-system, system-ui, sans-serif; font-size: 13px; color: var(--muted); margin-right: 4px; }
-  .priority-dot { width: 27px; height: 27px; border-radius: 50%; border: 2px solid currentColor; cursor: pointer; background: transparent; padding: 0; position: relative; }
-  .priority-dot::after { content: ''; position: absolute; inset: 0; border-radius: 50%; background: currentColor; opacity: 0; transition: opacity 0.12s ease; z-index: 0; }
+  .priority-label { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 13px; color: var(--muted); margin-right: 4px; }
+  .priority-dot { width: 27px; height: 27px; border-radius: 50%; border: 2px solid currentColor; cursor: pointer; padding: 0; position: relative; transition: box-shadow 0.12s ease; }
   .priority-dot::before {
     content: attr(data-p); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    font-family: -apple-system, system-ui, sans-serif; font-size: 12px; font-weight: 700; color: currentColor; z-index: 1;
+    font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 12px; font-weight: 700; color: currentColor; z-index: 1;
   }
-  .priority-dot.checked::after { opacity: 1; }
-  .priority-dot.checked::before { color: #fff; }
-  .priority-dot[data-p="1"] { color: var(--p1); }
-  .priority-dot[data-p="2"] { color: var(--p2); }
-  .priority-dot[data-p="3"] { color: var(--p3); }
-  .priority-dot[data-p="4"] { color: var(--p4); }
-  .priority-dot[data-p="5"] { color: var(--p5); }
 
   .p1 .reminder-title { color: var(--p1); }
   .p2 .reminder-title { color: var(--p2); }
@@ -162,7 +174,7 @@
   .reminder.done.p1 .reminder-title, .reminder.done.p2 .reminder-title, .reminder.done.p3 .reminder-title,
   .reminder.done.p4 .reminder-title, .reminder.done.p5 .reminder-title { color: var(--muted); }
 
-  .not-due-tag { font-family: -apple-system, system-ui, sans-serif; font-size: 10px; color: var(--muted); }
+  .not-due-tag { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 10px; color: var(--muted); }
 
   .search-bar {
     display: flex;
@@ -175,7 +187,7 @@
     border-radius: 10px;
     padding: 9px 12px;
     font-size: 13.5px;
-    font-family: -apple-system, system-ui, sans-serif;
+    font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
     background: var(--card);
     color: var(--ink);
     outline: none;
@@ -188,7 +200,7 @@
     font-size: 13px;
     color: var(--ink);
     cursor: pointer;
-    font-family: -apple-system, system-ui, sans-serif;
+    font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
   }
 
   .priority-filter {
@@ -196,7 +208,7 @@
     align-items: center;
     gap: 6px;
     margin-bottom: 20px;
-    font-family: -apple-system, system-ui, sans-serif;
+    font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
   }
   .priority-filter-label { font-size: 11.5px; color: var(--muted); margin-right: 2px; }
 
@@ -205,7 +217,7 @@
     align-items: center;
     gap: 8px;
     margin-bottom: 14px;
-    font-family: -apple-system, system-ui, sans-serif;
+    font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
   }
   .sort-label { font-size: 11.5px; color: var(--muted); margin-right: 2px; }
   .sort-chip {
@@ -228,7 +240,7 @@
     font-size: 11.5px;
     cursor: pointer;
     padding: 6px 10px;
-    font-family: -apple-system, system-ui, sans-serif;
+    font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
     font-weight: 600;
   }
 
@@ -237,7 +249,7 @@
     border: 1px solid var(--line);
     border-radius: 8px;
     padding: 7px 9px;
-    font-family: 'Georgia', serif;
+    font-family: 'IBM Plex Sans', sans-serif;
     font-size: 15px;
     color: var(--ink);
     margin-bottom: 8px;
@@ -248,7 +260,7 @@
     border: 1px solid var(--line);
     border-radius: 8px;
     padding: 7px 9px;
-    font-family: -apple-system, system-ui, sans-serif;
+    font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
     font-size: 12.5px;
     color: var(--ink);
     background: var(--paper);
@@ -262,25 +274,18 @@
     font-size: 12.5px;
     font-weight: 600;
     cursor: pointer;
-    font-family: -apple-system, system-ui, sans-serif;
+    font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
   }
   .edit-save-btn { background: var(--ember); color: white; }
   .edit-cancel-btn { background: var(--line); color: var(--ink); }
   .priority-filter-chip {
     width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid currentColor;
-    background: transparent; cursor: pointer; position: relative; padding: 0;
+    cursor: pointer; position: relative; padding: 0;
   }
   .priority-filter-chip::before {
     content: attr(data-p); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     font-size: 10.5px; font-weight: 700; color: currentColor;
   }
-  .priority-filter-chip[data-p="1"] { color: var(--p1); }
-  .priority-filter-chip[data-p="2"] { color: var(--p2); }
-  .priority-filter-chip[data-p="3"] { color: var(--p3); }
-  .priority-filter-chip[data-p="4"] { color: var(--p4); }
-  .priority-filter-chip[data-p="5"] { color: var(--p5); }
-  .priority-filter-chip.active { background: currentColor; }
-  .priority-filter-chip.active::before { color: #fff; }
 
   .alarm-priority {
     display: inline-flex;
@@ -290,7 +295,7 @@
     border-radius: 20px;
     padding: 4px 12px 4px 4px;
     margin: 0 0 14px;
-    font-family: -apple-system, system-ui, sans-serif;
+    font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
     font-size: 12px;
     color: var(--ink);
   }
@@ -301,21 +306,21 @@
 
   .delete-btn {
     flex-shrink: 0; background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer;
-    padding: 4px 6px; line-height: 1; font-family: -apple-system, system-ui, sans-serif;
+    padding: 4px 6px; line-height: 1; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
   }
 
-  .empty-state { text-align: center; padding: 40px 20px; color: var(--muted); font-family: -apple-system, system-ui, sans-serif; font-size: 13.5px; }
+  .empty-state { text-align: center; padding: 40px 20px; color: var(--muted); font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 13.5px; }
   .empty-state .glyph { font-size: 30px; margin-bottom: 10px; opacity: 0.5; }
 
   .bulk-bar {
     position: sticky; bottom: 0; left: 0; right: 0; background: var(--ink); color: white; border-radius: 14px;
-    padding: 12px 14px; margin-top: 16px; display: flex; flex-direction: column; gap: 10px; font-family: -apple-system, system-ui, sans-serif;
+    padding: 12px 14px; margin-top: 16px; display: flex; flex-direction: column; gap: 10px; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
   }
   .bulk-row1 { display: flex; align-items: center; justify-content: space-between; }
   .bulk-count { font-size: 13.5px; font-weight: 600; }
   .bulk-cancel { background: none; border: none; color: #cfc8bb; font-size: 13px; cursor: pointer; }
   .bulk-row2 { display: flex; gap: 8px; }
-  .bulk-row2 input[type="datetime-local"] { flex: 1; border: none; border-radius: 8px; padding: 8px 10px; font-size: 13px; font-family: -apple-system, system-ui, sans-serif; }
+  .bulk-row2 input[type="datetime-local"] { flex: 1; border: none; border-radius: 8px; padding: 8px 10px; font-size: 13px; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; }
   .bulk-apply { background: var(--ember); color: white; border: none; border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
   .bulk-chips { display: flex; gap: 6px; flex-wrap: wrap; }
   .bulk-chip { background: rgba(255,255,255,0.12); border: none; color: #f1ede4; font-size: 12px; padding: 6px 10px; border-radius: 20px; cursor: pointer; }
@@ -325,14 +330,14 @@
   .alarm-card { background: var(--card); border-radius: 18px; padding: 26px 22px 20px; width: 100%; max-width: 380px; text-align: center; }
   .alarm-glyph { width: 52px; height: 52px; border-radius: 50%; background: var(--ember-soft); color: var(--ember); display: flex; align-items: center; justify-content: center; margin: 0 auto 14px; font-size: 24px; }
   .alarm-title { font-size: 19px; margin: 0 0 4px; }
-  .alarm-time { font-family: -apple-system, system-ui, sans-serif; font-size: 12.5px; color: var(--muted); margin: 0 0 20px; }
+  .alarm-time { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 12.5px; color: var(--muted); margin: 0 0 20px; }
   .alarm-actions { display: flex; gap: 8px; justify-content: center; margin-bottom: 10px; }
-  .alarm-done-btn { background: var(--ink); color: white; border: none; border-radius: 10px; padding: 10px 18px; font-size: 13.5px; font-weight: 600; cursor: pointer; font-family: -apple-system, system-ui, sans-serif; flex: 1; }
-  .alarm-dismiss-btn { background: var(--done-bg); color: var(--ink); border: none; border-radius: 10px; padding: 10px 14px; font-size: 13.5px; cursor: pointer; font-family: -apple-system, system-ui, sans-serif; }
-  .snooze-label { font-family: -apple-system, system-ui, sans-serif; font-size: 11.5px; color: var(--muted); margin: 4px 0 8px; }
+  .alarm-done-btn { background: var(--ink); color: white; border: none; border-radius: 10px; padding: 10px 18px; font-size: 13.5px; font-weight: 600; cursor: pointer; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; flex: 1; }
+  .alarm-dismiss-btn { background: var(--done-bg); color: var(--ink); border: none; border-radius: 10px; padding: 10px 14px; font-size: 13.5px; cursor: pointer; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; }
+  .snooze-label { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 11.5px; color: var(--muted); margin: 4px 0 8px; }
   .snooze-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-  .snooze-btn { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 8px 4px; font-size: 12px; color: var(--ink); cursor: pointer; font-family: -apple-system, system-ui, sans-serif; }
-  .queue-note { font-family: -apple-system, system-ui, sans-serif; font-size: 11px; color: var(--muted); margin-top: 12px; }
+  .snooze-btn { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 8px 4px; font-size: 12px; color: var(--ink); cursor: pointer; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; }
+  .queue-note { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 11px; color: var(--muted); margin-top: 12px; }
 </style>
 </head>
 <body>
@@ -361,6 +366,8 @@
   let pendingDeleteIds = new Set();
   let sortMode = 'due'; // 'due' | 'priority'
   let editingId = null;
+  let showAddPopup = false;
+  let addPriority = 3;
 
   // Google Drive sync state
   let clientId = localStorage.getItem(CLIENT_ID_KEY) || '';
@@ -387,6 +394,20 @@
     if (isNaN(d)) return '';
     return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
   }
+  function nextOccurrenceISO(hour24) {
+    const now = new Date();
+    const candidate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour24, 0, 0, 0);
+    if (candidate.getTime() <= now.getTime()) candidate.setDate(candidate.getDate() + 1);
+    return candidate.toISOString();
+  }
+  const ABSOLUTE_TIME_OPTIONS = [
+    { label: '5 AM', hour: 5 },
+    { label: '1 PM', hour: 13 },
+    { label: '5 PM', hour: 17 }
+  ];
+  function absoluteTimeButtonsHtml(dataAttr) {
+    return ABSOLUTE_TIME_OPTIONS.map(o => `<button class="snooze-btn" data-${dataAttr}-abs="${o.hour}">${o.label}</button>`).join('');
+  }
   function fmtTime(iso) {
     if (!iso) return 'No time set';
     const d = new Date(iso);
@@ -405,6 +426,28 @@
     const d = document.createElement('div');
     d.textContent = str;
     return d.innerHTML;
+  }
+  // Priority 1-5 rendered using only teal, blue, and black. Every dot starts
+  // white/outline; the fill only appears on whichever priority is currently
+  // selected for that reminder — the fill itself is the "selected" signal.
+  const PRIORITY_META = {
+    1: 'var(--ember)',
+    2: 'var(--ember)',
+    3: 'var(--gold)',
+    4: 'var(--gold)',
+    5: 'var(--ink)'
+  };
+  function priorityDotHtml(p, checked, extraAttrs) {
+    const color = PRIORITY_META[p];
+    const bg = checked ? color : 'transparent';
+    const textColor = checked ? '#ffffff' : color;
+    return `<button class="priority-dot ${checked ? 'checked' : ''}" style="border-color:${color}; background:${bg}; color:${textColor};" data-p="${p}" ${extraAttrs} title="Priority ${p}"></button>`;
+  }
+  function priorityFilterChipHtml(p, active) {
+    const color = PRIORITY_META[p];
+    const bg = active ? color : 'transparent';
+    const textColor = active ? '#ffffff' : color;
+    return `<button class="priority-filter-chip ${active ? 'active' : ''}" style="border-color:${color}; background:${bg}; color:${textColor};" data-p="${p}" data-filter-priority="${p}" title="Filter to priority ${p}"></button>`;
   }
   function isDue(r) {
     if (!r.when) return false;
@@ -606,12 +649,12 @@
   /* =========================================================
      REMINDER LOGIC
      ========================================================= */
-  function addReminder(title, when) {
+  function addReminder(title, when, priority) {
     reminders.unshift({
       id: 'r' + Date.now() + Math.random().toString(36).slice(2, 7),
       title: title.trim(),
       when: when || null,
-      priority: 3,
+      priority: priority || 3,
       done: false,
       completedAt: null,
       suppressedUntil: null,
@@ -620,6 +663,43 @@
     });
     save();
     render();
+  }
+  function openAddPopup() {
+    showAddPopup = true;
+    addPriority = 3;
+    render();
+  }
+  function closeAddPopup() {
+    showAddPopup = false;
+    render();
+  }
+  function setAddPriority(p) {
+    addPriority = p;
+    render();
+  }
+  function bumpTimeInput(inputId, minutes) {
+    const el = document.getElementById(inputId);
+    if (!el) return;
+    const base = el.value ? new Date(el.value) : new Date();
+    const newDate = new Date(base.getTime() + minutes * 60000);
+    el.value = el.value ? isoToLocalInputValue(newDate.toISOString()) : nowLocalInputValue(minutes * 60000);
+  }
+  function setTimeInputAbsolute(inputId, hour) {
+    const el = document.getElementById(inputId);
+    if (!el) return;
+    el.value = isoToLocalInputValue(nextOccurrenceISO(hour));
+  }
+  function bumpAddTime(minutes) { bumpTimeInput('add-popup-time', minutes); }
+  function bumpAddTimeAbsolute(hour) { setTimeInputAbsolute('add-popup-time', hour); }
+  function submitAddPopup() {
+    const titleEl = document.getElementById('add-popup-title');
+    const timeEl = document.getElementById('add-popup-time');
+    const title = titleEl.value.trim();
+    if (!title) { titleEl.focus(); return; }
+    const when = timeEl.value ? new Date(timeEl.value).toISOString() : null;
+    const priority = addPriority;
+    showAddPopup = false;
+    addReminder(title, when, priority);
   }
   function setPriority(id, priority) {
     const r = reminders.find(r => r.id === id);
@@ -648,6 +728,8 @@
     save();
     render();
   }
+  function bumpEditTime(id, minutes) { bumpTimeInput('edit-time-' + id, minutes); }
+  function bumpEditTimeAbsolute(id, hour) { setTimeInputAbsolute('edit-time-' + id, hour); }
   function toggleDone(id) {
     const r = reminders.find(r => r.id === id);
     if (r) {
@@ -674,6 +756,11 @@
   }
   function applyBulkSnooze(minutes) {
     const target = new Date(Date.now() + minutes * 60000).toISOString();
+    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); } });
+    save(); selectMode = false; selectedIds.clear(); render();
+  }
+  function applyBulkSnoozeAbsolute(hour) {
+    const target = nextOccurrenceISO(hour);
     reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); } });
     save(); selectMode = false; selectedIds.clear(); render();
   }
@@ -837,6 +924,12 @@
     if (r) { r.when = new Date(Date.now() + minutes * 60000).toISOString(); r.suppressedUntil = null; r.updated = Date.now(); save(); }
     alarmQueue.shift(); render();
   }
+  function snoozeCurrentAbsolute(hour) {
+    const id = alarmQueue[0];
+    const r = reminders.find(r => r.id === id);
+    if (r) { r.when = nextOccurrenceISO(hour); r.suppressedUntil = null; r.updated = Date.now(); save(); }
+    alarmQueue.shift(); render();
+  }
   function dismissCurrent() {
     const id = alarmQueue[0];
     const r = reminders.find(r => r.id === id);
@@ -871,10 +964,12 @@
      RENDER
      ========================================================= */
   function render() {
-    const titleField = document.getElementById('new-title');
+    const titleField = document.getElementById('add-popup-title');
     const wasFocused = document.activeElement === titleField;
     const savedTitleValue = titleField ? titleField.value : '';
     const savedCaret = titleField ? titleField.selectionStart : null;
+    const timeField = document.getElementById('add-popup-time');
+    const savedTimeValue = timeField ? timeField.value : nowLocalInputValue();
 
     const searchField = document.getElementById('search-input');
     const searchWasFocused = document.activeElement === searchField;
@@ -885,6 +980,7 @@
     const totalActiveCount = reminders.filter(r => !r.done).length;
 
     root.innerHTML = `
+      <div class="brand-logo"><img src="data:image/png;base64,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" alt="TLS Solutions" /></div>
       <div class="header">
         <h1>Reminders</h1>
         <div class="header-right">
@@ -905,7 +1001,7 @@
       </div>
       <div class="priority-filter">
         <span class="priority-filter-label">Search with priority</span>
-        ${[1,2,3,4,5].map(p => `<button class="priority-filter-chip ${priorityFilter === p ? 'active' : ''}" data-p="${p}" data-filter-priority="${p}" title="Filter to priority ${p}"></button>`).join('')}
+        ${[1,2,3,4,5].map(p => priorityFilterChipHtml(p, priorityFilter === p)).join('')}
       </div>
       <div class="sort-row">
         <span class="sort-label">Sort by</span>
@@ -914,17 +1010,12 @@
       </div>` : ''}
 
       ${!selectMode ? `
-      <div class="add-form">
-        <input type="text" id="new-title" placeholder="Remind me to..." value="${escapeHtml(savedTitleValue)}" />
-        <div class="add-row">
-          <input type="datetime-local" id="new-time" value="${nowLocalInputValue()}" />
-          <button class="add-btn" id="add-btn">Add</button>
-        </div>
-      </div>` : ''}
+      <button class="add-trigger-btn" id="add-trigger-btn">+ Add reminder</button>` : ''}
 
       ${!loaded ? '<div class="empty-state">Loading...</div>' : renderLists(active, done)}
 
       ${selectMode && selectedIds.size > 0 ? renderBulkBar() : ''}
+      ${showAddPopup ? renderAddPopup(savedTitleValue, savedTimeValue) : ''}
       ${alarmQueue.length && !alertsPaused ? renderAlarm() : ''}
       ${showDeleteConfirm ? renderDeleteConfirm() : ''}
     `;
@@ -932,7 +1023,7 @@
     wireEvents();
 
     if (wasFocused) {
-      const el = document.getElementById('new-title');
+      const el = document.getElementById('add-popup-title');
       if (el) { el.focus(); if (savedCaret !== null) el.setSelectionRange(savedCaret, savedCaret); }
     }
     if (searchWasFocused) {
@@ -1007,7 +1098,20 @@
           <div class="reminder-body" style="width:100%;">
             <input type="text" class="edit-title-input" id="edit-title-${r.id}" value="${escapeHtml(r.title)}" />
             <input type="datetime-local" class="edit-time-input" id="edit-time-${r.id}" value="${isoToLocalInputValue(r.when)}" />
-            <div class="edit-actions">
+            <p class="snooze-label" style="margin:0 0 6px;">Push time forward by</p>
+            <div class="snooze-grid">
+              <button class="snooze-btn" data-edit-bump="${r.id}" data-minutes="5">5m</button>
+              <button class="snooze-btn" data-edit-bump="${r.id}" data-minutes="10">10m</button>
+              <button class="snooze-btn" data-edit-bump="${r.id}" data-minutes="15">15m</button>
+              <button class="snooze-btn" data-edit-bump="${r.id}" data-minutes="30">30m</button>
+              <button class="snooze-btn" data-edit-bump="${r.id}" data-minutes="60">1h</button>
+              <button class="snooze-btn" data-edit-bump="${r.id}" data-minutes="120">2h</button>
+              <button class="snooze-btn" data-edit-bump="${r.id}" data-minutes="300">5h</button>
+              <button class="snooze-btn" data-edit-bump-abs="${r.id}" data-hour="5">5 AM</button>
+              <button class="snooze-btn" data-edit-bump-abs="${r.id}" data-hour="13">1 PM</button>
+              <button class="snooze-btn" data-edit-bump-abs="${r.id}" data-hour="17">5 PM</button>
+            </div>
+            <div class="edit-actions" style="margin-top:10px;">
               <button class="edit-save-btn" data-save-edit="${r.id}">Save</button>
               <button class="edit-cancel-btn" data-cancel-edit="${r.id}">Cancel</button>
             </div>
@@ -1028,7 +1132,7 @@
           ${!selectMode ? `
           <div class="priority-row">
             <span class="priority-label">Priority</span>
-            ${[1,2,3,4,5].map(p => `<button class="priority-dot ${priority === p ? 'checked' : ''}" data-p="${p}" data-priority-id="${r.id}" title="Priority ${p}"></button>`).join('')}
+            ${[1,2,3,4,5].map(p => priorityDotHtml(p, priority === p, `data-priority-id="${r.id}"`)).join('')}
           </div>` : ''}
         </div>
         ${!selectMode ? `<button class="edit-btn" data-edit-id="${r.id}">Edit</button>` : ''}
@@ -1053,6 +1157,9 @@
           <button class="snooze-btn" data-bulk-snooze="60">1h</button>
           <button class="snooze-btn" data-bulk-snooze="120">2h</button>
           <button class="snooze-btn" data-bulk-snooze="300">5h</button>
+          <button class="snooze-btn" data-bulk-snooze-abs="5">5 AM</button>
+          <button class="snooze-btn" data-bulk-snooze-abs="13">1 PM</button>
+          <button class="snooze-btn" data-bulk-snooze-abs="17">5 PM</button>
         </div>
         <p class="snooze-label" style="margin:10px 0 0;">Or set an exact time</p>
         <div class="bulk-chips">
@@ -1087,6 +1194,40 @@
     `;
   }
 
+  function renderAddPopup(titleValue, timeValue) {
+    return `
+      <div class="alarm-overlay">
+        <div class="alarm-card">
+          <div class="alarm-glyph">+</div>
+          <p class="alarm-title" style="margin-bottom:14px;">New reminder</p>
+          <input type="text" class="edit-title-input" id="add-popup-title" placeholder="Remind me to..." value="${escapeHtml(titleValue)}" />
+          <input type="datetime-local" class="edit-time-input" id="add-popup-time" value="${timeValue}" />
+          <p class="snooze-label" style="margin-top:10px;">Push time forward by</p>
+          <div class="snooze-grid">
+            <button class="snooze-btn" data-bump="5">5m</button>
+            <button class="snooze-btn" data-bump="10">10m</button>
+            <button class="snooze-btn" data-bump="15">15m</button>
+            <button class="snooze-btn" data-bump="30">30m</button>
+            <button class="snooze-btn" data-bump="60">1h</button>
+            <button class="snooze-btn" data-bump="120">2h</button>
+            <button class="snooze-btn" data-bump="300">5h</button>
+            <button class="snooze-btn" data-bump-abs="5">5 AM</button>
+            <button class="snooze-btn" data-bump-abs="13">1 PM</button>
+            <button class="snooze-btn" data-bump-abs="17">5 PM</button>
+          </div>
+          <p class="snooze-label">Priority</p>
+          <div class="priority-row" style="justify-content:center; margin-top:0;">
+            ${[1,2,3,4,5].map(p => priorityDotHtml(p, addPriority === p, `data-add-priority="${p}"`)).join('')}
+          </div>
+          <div class="alarm-actions" style="margin-top:18px;">
+            <button class="alarm-done-btn" id="add-submit-btn">Add reminder</button>
+            <button class="alarm-dismiss-btn" id="add-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function renderAlarm() {
     const r = reminders.find(r => r.id === alarmQueue[0]);
     if (!r) return '';
@@ -1103,7 +1244,7 @@
           </div>
           <p class="snooze-label">Priority</p>
           <div class="priority-row" style="justify-content:center; margin-top:0 0 16px;">
-            ${[1,2,3,4,5].map(p => `<button class="priority-dot ${priority === p ? 'checked' : ''}" data-p="${p}" data-alarm-priority-id="${r.id}" title="Priority ${p}"></button>`).join('')}
+            ${[1,2,3,4,5].map(p => priorityDotHtml(p, priority === p, `data-alarm-priority-id="${r.id}"`)).join('')}
           </div>
           <p class="snooze-label">Snooze for</p>
           <div class="snooze-grid">
@@ -1114,6 +1255,9 @@
             <button class="snooze-btn" data-snooze="60">1h</button>
             <button class="snooze-btn" data-snooze="120">2h</button>
             <button class="snooze-btn" data-snooze="300">5h</button>
+            <button class="snooze-btn" data-snooze-abs="5">5 AM</button>
+            <button class="snooze-btn" data-snooze-abs="13">1 PM</button>
+            <button class="snooze-btn" data-snooze-abs="17">5 PM</button>
           </div>
           ${alarmQueue.length > 1 ? `<p class="queue-note">${alarmQueue.length - 1} more waiting</p>` : ''}
           <button class="alarm-dismiss-btn" id="pause-alerts-btn" style="margin-top:14px; width:100%;">Pause all alert popups</button>
@@ -1134,30 +1278,28 @@
     const pauseAlertsBtn = document.getElementById('pause-alerts-btn');
     if (pauseAlertsBtn) pauseAlertsBtn.addEventListener('click', togglePauseAlerts);
 
-    const titleInput = document.getElementById('new-title');
-    const timeInput = document.getElementById('new-time');
-    const addBtn = document.getElementById('add-btn');
-    if (addBtn) {
-      function handleAdd() {
-        const title = titleInput.value.trim();
-        if (!title) return;
-        const timeVal = timeInput.value;
-        titleInput.value = '';
-        addReminder(title, timeVal ? new Date(timeVal).toISOString() : null);
-      }
-      addBtn.addEventListener('click', handleAdd);
-      titleInput.addEventListener('keydown', e => { if (e.key === 'Enter') handleAdd(); });
-      // request notification permission on first interaction
-      titleInput.addEventListener('focus', () => {
-        if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
-      }, { once: true });
-    }
+    const addTriggerBtn = document.getElementById('add-trigger-btn');
+    if (addTriggerBtn) addTriggerBtn.addEventListener('click', () => {
+      if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+      openAddPopup();
+    });
+    const addSubmitBtn = document.getElementById('add-submit-btn');
+    if (addSubmitBtn) addSubmitBtn.addEventListener('click', submitAddPopup);
+    const addCancelBtn = document.getElementById('add-cancel-btn');
+    if (addCancelBtn) addCancelBtn.addEventListener('click', closeAddPopup);
+    const addPopupTitle = document.getElementById('add-popup-title');
+    if (addPopupTitle) addPopupTitle.addEventListener('keydown', e => { if (e.key === 'Enter') submitAddPopup(); });
+    document.querySelectorAll('[data-bump]').forEach(el => el.addEventListener('click', () => bumpAddTime(parseInt(el.dataset.bump, 10))));
+    document.querySelectorAll('[data-bump-abs]').forEach(el => el.addEventListener('click', () => bumpAddTimeAbsolute(parseInt(el.dataset.bumpAbs, 10))));
+    document.querySelectorAll('[data-add-priority]').forEach(el => el.addEventListener('click', () => setAddPriority(parseInt(el.dataset.addPriority, 10))));
 
     document.querySelectorAll('.check').forEach(el => el.addEventListener('click', () => toggleDone(el.dataset.id)));
     document.querySelectorAll('[data-pick]').forEach(el => el.addEventListener('click', () => togglePick(el.dataset.pick)));
     document.querySelectorAll('[data-priority-id]').forEach(el => el.addEventListener('click', () => setPriority(el.dataset.priorityId, parseInt(el.dataset.p, 10))));
     document.querySelectorAll('[data-alarm-priority-id]').forEach(el => el.addEventListener('click', () => setPriority(el.dataset.alarmPriorityId, parseInt(el.dataset.p, 10))));
     document.querySelectorAll('[data-edit-id]').forEach(el => el.addEventListener('click', () => startEdit(el.dataset.editId)));
+    document.querySelectorAll('[data-edit-bump]').forEach(el => el.addEventListener('click', () => bumpEditTime(el.dataset.editBump, parseInt(el.dataset.minutes, 10))));
+    document.querySelectorAll('[data-edit-bump-abs]').forEach(el => el.addEventListener('click', () => bumpEditTimeAbsolute(el.dataset.editBumpAbs, parseInt(el.dataset.hour, 10))));
     document.querySelectorAll('[data-cancel-edit]').forEach(el => el.addEventListener('click', cancelEdit));
     document.querySelectorAll('[data-save-edit]').forEach(el => el.addEventListener('click', () => {
       const id = el.dataset.saveEdit;
@@ -1183,12 +1325,14 @@
     if (bulkApply) bulkApply.addEventListener('click', () => applyBulkTime(bulkTime.value));
     document.querySelectorAll('.bulk-chip').forEach(el => el.addEventListener('click', () => applyBulkTime(el.dataset.preset)));
     document.querySelectorAll('[data-bulk-snooze]').forEach(el => el.addEventListener('click', () => applyBulkSnooze(parseInt(el.dataset.bulkSnooze, 10))));
+    document.querySelectorAll('[data-bulk-snooze-abs]').forEach(el => el.addEventListener('click', () => applyBulkSnoozeAbsolute(parseInt(el.dataset.bulkSnoozeAbs, 10))));
 
     const alarmComplete = document.getElementById('alarm-complete');
     if (alarmComplete) alarmComplete.addEventListener('click', completeCurrent);
     const alarmDismiss = document.getElementById('alarm-dismiss');
     if (alarmDismiss) alarmDismiss.addEventListener('click', dismissCurrent);
     document.querySelectorAll('[data-snooze]').forEach(el => el.addEventListener('click', () => snoozeCurrent(parseInt(el.dataset.snooze, 10))));
+    document.querySelectorAll('[data-snooze-abs]').forEach(el => el.addEventListener('click', () => snoozeCurrentAbsolute(parseInt(el.dataset.snoozeAbs, 10))));
 
     const saveClientIdBtn = document.getElementById('save-client-id');
     if (saveClientIdBtn) saveClientIdBtn.addEventListener('click', () => {
