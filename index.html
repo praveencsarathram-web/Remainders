@@ -56,6 +56,8 @@
   }
   .select-toggle { color: var(--select); background: var(--select-soft); }
   .settings-toggle { color: var(--ink); background: var(--line); }
+  .alerts-toggle { color: var(--ink); background: var(--line); }
+  .alerts-toggle.paused { color: white; background: var(--ember); }
 
   .subtitle { font-family: -apple-system, system-ui, sans-serif; font-size: 13px; color: var(--muted); margin: 0 0 16px; }
 
@@ -277,6 +279,8 @@
   .priority-filter-chip[data-p="3"] { color: var(--p3); }
   .priority-filter-chip[data-p="4"] { color: var(--p4); }
   .priority-filter-chip[data-p="5"] { color: var(--p5); }
+  .priority-filter-chip.active { background: currentColor; }
+  .priority-filter-chip.active::before { color: #fff; }
 
   .alarm-priority {
     display: inline-flex;
@@ -348,9 +352,11 @@
   let selectMode = false;
   let selectedIds = new Set();
   let alarmQueue = [];
+  let alertsPaused = false;
   let audioCtx = null;
   let showSettings = false;
   let searchQuery = '';
+  let priorityFilter = null;
   let showDeleteConfirm = false;
   let pendingDeleteIds = new Set();
   let sortMode = 'due'; // 'due' | 'priority'
@@ -607,6 +613,7 @@
       when: when || null,
       priority: 3,
       done: false,
+      completedAt: null,
       suppressedUntil: null,
       created: Date.now(),
       updated: Date.now()
@@ -643,7 +650,11 @@
   }
   function toggleDone(id) {
     const r = reminders.find(r => r.id === id);
-    if (r) { r.done = !r.done; r.updated = Date.now(); }
+    if (r) {
+      r.done = !r.done;
+      r.completedAt = r.done ? Date.now() : null;
+      r.updated = Date.now();
+    }
     save();
     render();
   }
@@ -663,16 +674,16 @@
   }
   function applyBulkSnooze(minutes) {
     const target = new Date(Date.now() + minutes * 60000).toISOString();
-    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; r.updated = Date.now(); } });
+    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); } });
     save(); selectMode = false; selectedIds.clear(); render();
   }
   function applyBulkTime(iso) {
     if (!iso) return;
-    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = new Date(iso).toISOString(); r.suppressedUntil = null; r.done = false; r.updated = Date.now(); } });
+    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = new Date(iso).toISOString(); r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); } });
     save(); selectMode = false; selectedIds.clear(); render();
   }
   function bulkMarkIncomplete() {
-    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.done = false; r.updated = Date.now(); } });
+    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.done = false; r.completedAt = null; r.updated = Date.now(); } });
     save(); selectMode = false; selectedIds.clear(); render();
   }
   function deleteBulk() {
@@ -701,13 +712,13 @@
     if (!searchQuery.trim()) return true;
     return r.title.toLowerCase().includes(searchQuery.trim().toLowerCase());
   }
-
-  function selectByPriority(p) {
-    selectMode = true;
-    selectedIds.clear();
-    reminders.forEach(r => {
-      if (!r.done && r.priority === p && matchesSearch(r)) selectedIds.add(r.id);
-    });
+  function matchesFilters(r) {
+    if (!matchesSearch(r)) return false;
+    if (priorityFilter !== null && r.priority !== priorityFilter) return false;
+    return true;
+  }
+  function togglePriorityFilter(p) {
+    priorityFilter = (priorityFilter === p) ? null : p;
     render();
   }
 
@@ -777,6 +788,22 @@
 
   function checkDue() {
     const now = Date.now();
+
+    // Reopen anything that was marked done *before* its due time arrived —
+    // an "early" completion doesn't count once the actual due moment hits.
+    let reopened = false;
+    reminders.forEach(r => {
+      if (!r.done || !r.when || !r.completedAt) return;
+      const due = new Date(r.when).getTime();
+      if (isNaN(due) || due > now) return;
+      if (r.completedAt >= due) return; // completed at/after due time — this is final, leave it
+      r.done = false;
+      r.completedAt = null;
+      r.suppressedUntil = null;
+      r.updated = Date.now();
+      reopened = true;
+    });
+
     let newlyFired = false;
     let newlyFiredReminders = [];
     reminders.forEach(r => {
@@ -796,6 +823,7 @@
       if (!a || !b) return 0;
       return (a.priority - b.priority) || (new Date(a.when) - new Date(b.when));
     });
+    if (reopened) save();
     if (newlyFired) {
       beep();
       newlyFiredReminders.forEach(notifyOS);
@@ -818,24 +846,22 @@
   function completeCurrent() {
     const id = alarmQueue[0];
     const r = reminders.find(r => r.id === id);
-    if (r) { r.done = true; r.updated = Date.now(); save(); }
+    if (r) { r.done = true; r.completedAt = Date.now(); r.updated = Date.now(); save(); }
     alarmQueue.shift(); render();
   }
+  function togglePauseAlerts() {
+    alertsPaused = !alertsPaused;
+    render();
+  }
 
-  function sortActive(list) {
-    const due = list.filter(isDue);
-    const notDue = list.filter(r => !isDue(r));
-
+  function sortList(list) {
+    const copy = [...list];
     if (sortMode === 'priority') {
-      const byPriority = (a, b) => (a.priority - b.priority) || (timeOrInf(a) - timeOrInf(b));
-      due.sort(byPriority);
-      notDue.sort(byPriority);
+      copy.sort((a, b) => (a.priority - b.priority) || (timeOrInf(a) - timeOrInf(b)));
     } else {
-      const byTime = (a, b) => (timeOrInf(a) - timeOrInf(b)) || (a.priority - b.priority);
-      due.sort(byTime);
-      notDue.sort(byTime);
+      copy.sort((a, b) => (timeOrInf(a) - timeOrInf(b)) || (a.priority - b.priority));
     }
-    return [...due, ...notDue];
+    return copy;
   }
   function timeOrInf(r) {
     return r.when ? new Date(r.when).getTime() : Infinity;
@@ -854,8 +880,8 @@
     const searchWasFocused = document.activeElement === searchField;
     const savedSearchCaret = searchField ? searchField.selectionStart : null;
 
-    const active = sortActive(reminders.filter(r => !r.done && matchesSearch(r)));
-    const done = reminders.filter(r => r.done && matchesSearch(r));
+    const active = sortList(reminders.filter(r => !r.done && matchesFilters(r)));
+    const done = sortList(reminders.filter(r => r.done && matchesFilters(r)));
     const totalActiveCount = reminders.filter(r => !r.done).length;
 
     root.innerHTML = `
@@ -864,6 +890,7 @@
         <div class="header-right">
           <span class="count">${totalActiveCount} active</span>
           <button class="pill-btn settings-toggle" id="settings-toggle">${showSettings ? 'Close' : 'Sync'}</button>
+          <button class="pill-btn alerts-toggle ${alertsPaused ? 'paused' : ''}" id="alerts-toggle" title="${alertsPaused ? 'Alerts paused — tap to resume' : 'Alerts on — tap to pause'}">${alertsPaused ? '\ud83d\udd15 Paused' : '\ud83d\udd14 Alerts'}</button>
           ${reminders.length ? `<button class="pill-btn select-toggle" id="select-toggle">${selectMode ? 'Cancel' : 'Select'}</button>` : ''}
         </div>
       </div>
@@ -878,7 +905,7 @@
       </div>
       <div class="priority-filter">
         <span class="priority-filter-label">Search with priority</span>
-        ${[1,2,3,4,5].map(p => `<button class="priority-filter-chip" data-p="${p}" data-filter-priority="${p}" title="Select all priority ${p}"></button>`).join('')}
+        ${[1,2,3,4,5].map(p => `<button class="priority-filter-chip ${priorityFilter === p ? 'active' : ''}" data-p="${p}" data-filter-priority="${p}" title="Filter to priority ${p}"></button>`).join('')}
       </div>
       <div class="sort-row">
         <span class="sort-label">Sort by</span>
@@ -898,7 +925,7 @@
       ${!loaded ? '<div class="empty-state">Loading...</div>' : renderLists(active, done)}
 
       ${selectMode && selectedIds.size > 0 ? renderBulkBar() : ''}
-      ${alarmQueue.length ? renderAlarm() : ''}
+      ${alarmQueue.length && !alertsPaused ? renderAlarm() : ''}
       ${showDeleteConfirm ? renderDeleteConfirm() : ''}
     `;
 
@@ -1089,6 +1116,7 @@
             <button class="snooze-btn" data-snooze="300">5h</button>
           </div>
           ${alarmQueue.length > 1 ? `<p class="queue-note">${alarmQueue.length - 1} more waiting</p>` : ''}
+          <button class="alarm-dismiss-btn" id="pause-alerts-btn" style="margin-top:14px; width:100%;">Pause all alert popups</button>
         </div>
       </div>
     `;
@@ -1100,6 +1128,11 @@
 
     const settingsToggle = document.getElementById('settings-toggle');
     if (settingsToggle) settingsToggle.addEventListener('click', () => { showSettings = !showSettings; render(); });
+
+    const alertsToggle = document.getElementById('alerts-toggle');
+    if (alertsToggle) alertsToggle.addEventListener('click', togglePauseAlerts);
+    const pauseAlertsBtn = document.getElementById('pause-alerts-btn');
+    if (pauseAlertsBtn) pauseAlertsBtn.addEventListener('click', togglePauseAlerts);
 
     const titleInput = document.getElementById('new-title');
     const timeInput = document.getElementById('new-time');
@@ -1189,7 +1222,7 @@
     const searchClear = document.getElementById('search-clear');
     if (searchClear) searchClear.addEventListener('click', () => { searchQuery = ''; render(); });
     document.querySelectorAll('[data-filter-priority]').forEach(el => {
-      el.addEventListener('click', () => selectByPriority(parseInt(el.dataset.filterPriority, 10)));
+      el.addEventListener('click', () => togglePriorityFilter(parseInt(el.dataset.filterPriority, 10)));
     });
     document.querySelectorAll('[data-sort]').forEach(el => {
       el.addEventListener('click', () => { sortMode = el.dataset.sort; render(); });
