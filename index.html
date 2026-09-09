@@ -371,6 +371,8 @@
   let liveEditTime = null;
   let showAddPopup = false;
   let addPriority = 1;
+  let addAnchorTime = null;
+  let editAnchorTime = null;
 
   // Google Drive sync state
   let clientId = localStorage.getItem(CLIENT_ID_KEY) || '';
@@ -670,6 +672,7 @@
   function openAddPopup() {
     showAddPopup = true;
     addPriority = 1;
+    addAnchorTime = new Date().toISOString();
     render();
   }
   function closeAddPopup() {
@@ -686,19 +689,21 @@
     grid.querySelectorAll('.snooze-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
   }
-  function bumpTimeInput(inputId, minutes) {
-    const el = document.getElementById(inputId);
-    if (!el) return;
-    const base = el.value ? new Date(el.value) : new Date();
-    const newDate = new Date(base.getTime() + minutes * 60000);
-    el.value = el.value ? isoToLocalInputValue(newDate.toISOString()) : nowLocalInputValue(minutes * 60000);
-  }
+  // Relative bumps (5m/1h/etc.) always calculate from a fixed anchor time —
+  // the moment the popup opened (Add) or the reminder's original due time
+  // (Edit) — never from whatever a previous click left in the field. This
+  // way clicking around doesn't stack: only the last click counts.
   function setTimeInputAbsolute(inputId, hour) {
     const el = document.getElementById(inputId);
     if (!el) return;
     el.value = isoToLocalInputValue(nextOccurrenceISO(hour));
   }
-  function bumpAddTime(minutes) { bumpTimeInput('add-popup-time', minutes); }
+  function bumpAddTime(minutes) {
+    const el = document.getElementById('add-popup-time');
+    if (!el) return;
+    const base = addAnchorTime ? new Date(addAnchorTime) : new Date();
+    el.value = isoToLocalInputValue(new Date(base.getTime() + minutes * 60000).toISOString());
+  }
   function bumpAddTimeAbsolute(hour) { setTimeInputAbsolute('add-popup-time', hour); }
   function submitAddPopup() {
     const titleEl = document.getElementById('add-popup-title');
@@ -717,15 +722,18 @@
     render();
   }
   function startEdit(id) {
+    const r = reminders.find(r => r.id === id);
     editingId = id;
     liveEditTitle = null;
     liveEditTime = null;
+    editAnchorTime = (r && r.when) ? r.when : new Date().toISOString();
     render();
   }
   function cancelEdit() {
     editingId = null;
     liveEditTitle = null;
     liveEditTime = null;
+    editAnchorTime = null;
     render();
   }
   function saveEdit(id, title, whenValue) {
@@ -740,10 +748,16 @@
     editingId = null;
     liveEditTitle = null;
     liveEditTime = null;
+    editAnchorTime = null;
     save();
     render();
   }
-  function bumpEditTime(id, minutes) { bumpTimeInput('edit-time-' + id, minutes); }
+  function bumpEditTime(id, minutes) {
+    const el = document.getElementById('edit-time-' + id);
+    if (!el) return;
+    const base = editAnchorTime ? new Date(editAnchorTime) : new Date();
+    el.value = isoToLocalInputValue(new Date(base.getTime() + minutes * 60000).toISOString());
+  }
   function bumpEditTimeAbsolute(id, hour) { setTimeInputAbsolute('edit-time-' + id, hour); }
   function toggleDone(id) {
     const r = reminders.find(r => r.id === id);
@@ -797,7 +811,7 @@
   function confirmDelete() {
     reminders = reminders.filter(r => !pendingDeleteIds.has(r.id));
     alarmQueue = alarmQueue.filter(id => !pendingDeleteIds.has(id));
-    if (editingId && pendingDeleteIds.has(editingId)) editingId = null;
+    if (editingId && pendingDeleteIds.has(editingId)) { editingId = null; editAnchorTime = null; liveEditTitle = null; liveEditTime = null; }
     save();
     showDeleteConfirm = false;
     pendingDeleteIds = new Set();
@@ -827,6 +841,7 @@
     editingId = id;
     liveEditTitle = null;
     liveEditTime = null;
+    editAnchorTime = (r && r.when) ? r.when : new Date().toISOString();
     render();
   }
   function deleteFromEdit(id) {
