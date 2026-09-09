@@ -197,6 +197,73 @@
     font-family: -apple-system, system-ui, sans-serif;
   }
   .priority-filter-label { font-size: 11.5px; color: var(--muted); margin-right: 2px; }
+
+  .sort-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  .sort-label { font-size: 11.5px; color: var(--muted); margin-right: 2px; }
+  .sort-chip {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: 5px 12px;
+    font-size: 12px;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .sort-chip.active { background: var(--ink); color: white; border-color: var(--ink); }
+
+  .edit-btn {
+    flex-shrink: 0;
+    background: var(--done-bg);
+    border: none;
+    border-radius: 8px;
+    color: var(--ink);
+    font-size: 11.5px;
+    cursor: pointer;
+    padding: 6px 10px;
+    font-family: -apple-system, system-ui, sans-serif;
+    font-weight: 600;
+  }
+
+  .edit-title-input {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 7px 9px;
+    font-family: 'Georgia', serif;
+    font-size: 15px;
+    color: var(--ink);
+    margin-bottom: 8px;
+    background: var(--paper);
+  }
+  .edit-time-input {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 7px 9px;
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: 12.5px;
+    color: var(--ink);
+    background: var(--paper);
+    margin-bottom: 8px;
+  }
+  .edit-actions { display: flex; gap: 8px; }
+  .edit-save-btn, .edit-cancel-btn {
+    border: none;
+    border-radius: 8px;
+    padding: 7px 14px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  .edit-save-btn { background: var(--ember); color: white; }
+  .edit-cancel-btn { background: var(--line); color: var(--ink); }
   .priority-filter-chip {
     width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid currentColor;
     background: transparent; cursor: pointer; position: relative; padding: 0;
@@ -286,6 +353,8 @@
   let searchQuery = '';
   let showDeleteConfirm = false;
   let pendingDeleteIds = new Set();
+  let sortMode = 'due'; // 'due' | 'priority'
+  let editingId = null;
 
   // Google Drive sync state
   let clientId = localStorage.getItem(CLIENT_ID_KEY) || '';
@@ -304,6 +373,12 @@
   function pad(n) { return String(n).padStart(2, '0'); }
   function nowLocalInputValue(offsetMs) {
     const d = new Date(Date.now() + (offsetMs || 0));
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+  function isoToLocalInputValue(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
     return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
   }
   function fmtTime(iso) {
@@ -492,9 +567,34 @@
     local.forEach(r => byId.set(r.id, r));
     remote.forEach(r => {
       const existing = byId.get(r.id);
-      if (!existing || (r.created || 0) >= (existing.created || 0)) byId.set(r.id, r);
+      const remoteStamp = r.updated || r.created || 0;
+      const existingStamp = existing ? (existing.updated || existing.created || 0) : -1;
+      if (!existing || remoteStamp >= existingStamp) byId.set(r.id, r);
     });
     return Array.from(byId.values());
+  }
+
+  // Silent background pull — keeps this device in sync with changes made
+  // elsewhere without the user having to tap "Sync now".
+  let pullInFlight = false;
+  async function pullFromDrive() {
+    if (!accessToken || !driveFileId || pullInFlight) return;
+    pullInFlight = true;
+    try {
+      const text = await readDriveFile(driveFileId);
+      const remote = JSON.parse(text || '[]');
+      const merged = mergeReminders(reminders, remote);
+      if (JSON.stringify(merged) !== JSON.stringify(reminders)) {
+        reminders = merged;
+        saveLocal();
+        render();
+      }
+      setDriveStatus('synced');
+    } catch (e) {
+      setDriveStatus('error', e.message || String(e));
+    } finally {
+      pullInFlight = false;
+    }
   }
 
   /* =========================================================
@@ -508,20 +608,42 @@
       priority: 3,
       done: false,
       suppressedUntil: null,
-      created: Date.now()
+      created: Date.now(),
+      updated: Date.now()
     });
     save();
     render();
   }
   function setPriority(id, priority) {
     const r = reminders.find(r => r.id === id);
-    if (r) r.priority = priority;
+    if (r) { r.priority = priority; r.updated = Date.now(); }
+    save();
+    render();
+  }
+  function startEdit(id) {
+    editingId = id;
+    render();
+  }
+  function cancelEdit() {
+    editingId = null;
+    render();
+  }
+  function saveEdit(id, title, whenValue) {
+    const r = reminders.find(r => r.id === id);
+    if (r) {
+      const trimmed = title.trim();
+      if (trimmed) r.title = trimmed;
+      r.when = whenValue ? new Date(whenValue).toISOString() : null;
+      r.suppressedUntil = null;
+      r.updated = Date.now();
+    }
+    editingId = null;
     save();
     render();
   }
   function toggleDone(id) {
     const r = reminders.find(r => r.id === id);
-    if (r) r.done = !r.done;
+    if (r) { r.done = !r.done; r.updated = Date.now(); }
     save();
     render();
   }
@@ -541,16 +663,16 @@
   }
   function applyBulkSnooze(minutes) {
     const target = new Date(Date.now() + minutes * 60000).toISOString();
-    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; } });
+    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; r.updated = Date.now(); } });
     save(); selectMode = false; selectedIds.clear(); render();
   }
   function applyBulkTime(iso) {
     if (!iso) return;
-    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = new Date(iso).toISOString(); r.suppressedUntil = null; r.done = false; } });
+    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = new Date(iso).toISOString(); r.suppressedUntil = null; r.done = false; r.updated = Date.now(); } });
     save(); selectMode = false; selectedIds.clear(); render();
   }
   function bulkMarkIncomplete() {
-    reminders.forEach(r => { if (selectedIds.has(r.id)) r.done = false; });
+    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.done = false; r.updated = Date.now(); } });
     save(); selectMode = false; selectedIds.clear(); render();
   }
   function deleteBulk() {
@@ -684,32 +806,39 @@
   function snoozeCurrent(minutes) {
     const id = alarmQueue[0];
     const r = reminders.find(r => r.id === id);
-    if (r) { r.when = new Date(Date.now() + minutes * 60000).toISOString(); r.suppressedUntil = null; save(); }
+    if (r) { r.when = new Date(Date.now() + minutes * 60000).toISOString(); r.suppressedUntil = null; r.updated = Date.now(); save(); }
     alarmQueue.shift(); render();
   }
   function dismissCurrent() {
     const id = alarmQueue[0];
     const r = reminders.find(r => r.id === id);
-    if (r) { r.suppressedUntil = r.when; save(); }
+    if (r) { r.suppressedUntil = r.when; r.updated = Date.now(); save(); }
     alarmQueue.shift(); render();
   }
   function completeCurrent() {
     const id = alarmQueue[0];
     const r = reminders.find(r => r.id === id);
-    if (r) { r.done = true; save(); }
+    if (r) { r.done = true; r.updated = Date.now(); save(); }
     alarmQueue.shift(); render();
   }
 
   function sortActive(list) {
     const due = list.filter(isDue);
     const notDue = list.filter(r => !isDue(r));
-    due.sort((a, b) => (a.priority - b.priority) || (new Date(a.when) - new Date(b.when)));
-    notDue.sort((a, b) => {
-      const at = a.when ? new Date(a.when).getTime() : Infinity;
-      const bt = b.when ? new Date(b.when).getTime() : Infinity;
-      return at - bt;
-    });
+
+    if (sortMode === 'priority') {
+      const byPriority = (a, b) => (a.priority - b.priority) || (timeOrInf(a) - timeOrInf(b));
+      due.sort(byPriority);
+      notDue.sort(byPriority);
+    } else {
+      const byTime = (a, b) => (timeOrInf(a) - timeOrInf(b)) || (a.priority - b.priority);
+      due.sort(byTime);
+      notDue.sort(byTime);
+    }
     return [...due, ...notDue];
+  }
+  function timeOrInf(r) {
+    return r.when ? new Date(r.when).getTime() : Infinity;
   }
 
   /* =========================================================
@@ -748,8 +877,13 @@
         ${searchQuery ? `<button class="search-clear" id="search-clear">Clear</button>` : ''}
       </div>
       <div class="priority-filter">
-        <span class="priority-filter-label">Select by priority</span>
+        <span class="priority-filter-label">Search with priority</span>
         ${[1,2,3,4,5].map(p => `<button class="priority-filter-chip" data-p="${p}" data-filter-priority="${p}" title="Select all priority ${p}"></button>`).join('')}
+      </div>
+      <div class="sort-row">
+        <span class="sort-label">Sort by</span>
+        <button class="sort-chip ${sortMode === 'due' ? 'active' : ''}" data-sort="due">Due time</button>
+        <button class="sort-chip ${sortMode === 'priority' ? 'active' : ''}" data-sort="priority">Priority</button>
       </div>` : ''}
 
       ${!selectMode ? `
@@ -839,6 +973,22 @@
     const picked = selectedIds.has(r.id);
     const priority = r.priority || 3;
     const due = isDue(r);
+
+    if (editingId === r.id) {
+      return `
+        <div class="reminder p${priority}">
+          <div class="reminder-body" style="width:100%;">
+            <input type="text" class="edit-title-input" id="edit-title-${r.id}" value="${escapeHtml(r.title)}" />
+            <input type="datetime-local" class="edit-time-input" id="edit-time-${r.id}" value="${isoToLocalInputValue(r.when)}" />
+            <div class="edit-actions">
+              <button class="edit-save-btn" data-save-edit="${r.id}">Save</button>
+              <button class="edit-cancel-btn" data-cancel-edit="${r.id}">Cancel</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
     return `
       <div class="reminder p${priority} ${r.done ? 'done' : ''} ${picked ? 'picked' : ''}">
         ${selectMode
@@ -854,6 +1004,7 @@
             ${[1,2,3,4,5].map(p => `<button class="priority-dot ${priority === p ? 'checked' : ''}" data-p="${p}" data-priority-id="${r.id}" title="Priority ${p}"></button>`).join('')}
           </div>` : ''}
         </div>
+        ${!selectMode ? `<button class="edit-btn" data-edit-id="${r.id}">Edit</button>` : ''}
       </div>
     `;
   }
@@ -957,7 +1108,9 @@
       function handleAdd() {
         const title = titleInput.value.trim();
         if (!title) return;
-        addReminder(title, timeInput.value ? new Date(timeInput.value).toISOString() : null);
+        const timeVal = timeInput.value;
+        titleInput.value = '';
+        addReminder(title, timeVal ? new Date(timeVal).toISOString() : null);
       }
       addBtn.addEventListener('click', handleAdd);
       titleInput.addEventListener('keydown', e => { if (e.key === 'Enter') handleAdd(); });
@@ -971,6 +1124,14 @@
     document.querySelectorAll('[data-pick]').forEach(el => el.addEventListener('click', () => togglePick(el.dataset.pick)));
     document.querySelectorAll('[data-priority-id]').forEach(el => el.addEventListener('click', () => setPriority(el.dataset.priorityId, parseInt(el.dataset.p, 10))));
     document.querySelectorAll('[data-alarm-priority-id]').forEach(el => el.addEventListener('click', () => setPriority(el.dataset.alarmPriorityId, parseInt(el.dataset.p, 10))));
+    document.querySelectorAll('[data-edit-id]').forEach(el => el.addEventListener('click', () => startEdit(el.dataset.editId)));
+    document.querySelectorAll('[data-cancel-edit]').forEach(el => el.addEventListener('click', cancelEdit));
+    document.querySelectorAll('[data-save-edit]').forEach(el => el.addEventListener('click', () => {
+      const id = el.dataset.saveEdit;
+      const titleEl = document.getElementById('edit-title-' + id);
+      const timeEl = document.getElementById('edit-time-' + id);
+      saveEdit(id, titleEl.value, timeEl.value);
+    }));
 
     const bulkCancel = document.getElementById('bulk-cancel');
     if (bulkCancel) bulkCancel.addEventListener('click', () => { selectedIds.clear(); render(); });
@@ -1030,6 +1191,9 @@
     document.querySelectorAll('[data-filter-priority]').forEach(el => {
       el.addEventListener('click', () => selectByPriority(parseInt(el.dataset.filterPriority, 10)));
     });
+    document.querySelectorAll('[data-sort]').forEach(el => {
+      el.addEventListener('click', () => { sortMode = el.dataset.sort; render(); });
+    });
   }
 
   /* =========================================================
@@ -1039,6 +1203,7 @@
   render();
   setInterval(checkDue, 10000);
   checkDue();
+  setInterval(pullFromDrive, 30000);
 })();
 </script>
 </body>
