@@ -68,7 +68,11 @@
     .dashboard-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 26px; }
     .stat-card {
       background: var(--done-bg); border-radius: 14px; padding: 16px 18px; display: flex; flex-direction: column; gap: 4px;
+      border: 2px solid transparent; cursor: pointer; text-align: left; font-family: 'IBM Plex Sans', sans-serif;
+      transition: box-shadow 0.12s ease, border-color 0.12s ease;
     }
+    .stat-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    .stat-card.stat-active { border-color: var(--gold); }
     .stat-card .stat-label { font-family: 'IBM Plex Sans', sans-serif; font-size: 12.5px; color: var(--muted); font-weight: 600; }
     .stat-card .stat-value { font-size: 30px; font-weight: 700; color: var(--gold); }
     .stat-card.stat-due { background: #eafaf7; }
@@ -375,18 +379,20 @@
   .bulk-bar {
     position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
     width: min(94vw, 640px); max-height: 60vh; overflow-y: auto;
-    background: var(--ink); color: white; border-radius: 14px; box-shadow: 0 8px 28px rgba(0,0,0,0.3); z-index: 500;
+    background: #36C1B3; color: white; border-radius: 14px; box-shadow: 0 8px 28px rgba(0,0,0,0.3); z-index: 500;
     padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
   }
   .bulk-row1 { display: flex; align-items: center; justify-content: space-between; }
-  .bulk-count { font-size: 13.5px; font-weight: 600; }
-  .bulk-cancel { background: none; border: none; color: #cfc8bb; font-size: 13px; cursor: pointer; }
+  .bulk-count { font-size: 13.5px; font-weight: 600; color: #000000; }
+  .bulk-cancel { background: none; border: none; color: #000000; font-size: 13px; cursor: pointer; font-weight: 600; }
   .bulk-row2 { display: flex; gap: 8px; }
-  .bulk-row2 input[type="datetime-local"] { flex: 1; border: none; border-radius: 8px; padding: 6px 10px; font-size: 12.5px; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; }
+  .bulk-row2 input[type="datetime-local"] { flex: 1; border: none; border-radius: 8px; padding: 6px 10px; font-size: 12.5px; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; color: #000000; }
   .bulk-apply { background: var(--ember); color: white; border: none; border-radius: 8px; padding: 6px 14px; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }
   .bulk-chips { display: flex; gap: 6px; flex-wrap: wrap; }
-  .bulk-chip { background: rgba(255,255,255,0.12); border: none; color: #f1ede4; font-size: 11.5px; padding: 5px 10px; border-radius: 20px; cursor: pointer; }
-  .bulk-delete { background: rgba(196,80,45,0.25); border: none; color: #ffb59e; font-size: 11.5px; padding: 5px 10px; border-radius: 20px; cursor: pointer; }
+  .bulk-chip { background: rgba(0,0,0,0.08); border: none; color: #000000; font-size: 11.5px; padding: 5px 10px; border-radius: 20px; cursor: pointer; font-weight: 600; }
+  .bulk-delete { background: rgba(0,0,0,0.08); border: none; color: #000000; font-size: 11.5px; padding: 5px 10px; border-radius: 20px; cursor: pointer; font-weight: 600; }
+  .bulk-bar .priority-dot { background: #ffffff !important; }
+  .bulk-bar .snooze-label { color: #000000; font-weight: 600; }
 
   .bulk-bar-collapsed { flex-direction: row; align-items: center; justify-content: space-between; padding: 10px 16px; gap: 0; max-height: none; }
 
@@ -446,6 +452,11 @@
   let pendingBulkPriority = null; // priority number
   let bulkBarExpanded = false;
   let desktopNav = 'dashboard'; // dashboard | today | upcoming | checked | settings — only drives the wide-screen sidebar highlight
+  let dueStateFilter = null; // null | 'due' | 'upcoming' | 'checked' — the clickable stat cards
+  function toggleDueStateFilter(state) {
+    dueStateFilter = (dueStateFilter === state) ? null : state;
+    render();
+  }
   let userName = localStorage.getItem('reminders_user_name') || '';
   function getGreeting() {
     const hour = new Date().getHours();
@@ -1025,6 +1036,8 @@
     searchQuery = '';
     priorityFilter = null;
     dateFilterMode = 'all';
+    dueStateFilter = null;
+    desktopNav = 'dashboard';
     selectMode = false;
     render();
   }
@@ -1379,8 +1392,20 @@
     const alarmEditTimeField = alarmEditing ? document.getElementById('alarm-edit-time') : null;
     liveAlarmEditTime = alarmEditTimeField ? alarmEditTimeField.value : null;
 
-    const active = sortList(reminders.filter(r => !r.done && matchesFilters(r)));
-    const done = sortList(reminders.filter(r => r.done && matchesFilters(r)));
+    let active, done;
+    if (dueStateFilter === 'checked') {
+      active = [];
+      done = sortList(reminders.filter(r => r.done && matchesFilters(r)));
+    } else if (dueStateFilter === 'due') {
+      active = sortList(reminders.filter(r => !r.done && matchesFilters(r) && isDue(r)));
+      done = [];
+    } else if (dueStateFilter === 'upcoming') {
+      active = sortList(reminders.filter(r => !r.done && matchesFilters(r) && !isDue(r)));
+      done = [];
+    } else {
+      active = sortList(reminders.filter(r => !r.done && matchesFilters(r)));
+      done = sortList(reminders.filter(r => r.done && matchesFilters(r)));
+    }
     const totalActiveCount = reminders.filter(r => !r.done).length;
 
     root.innerHTML = `
@@ -1473,10 +1498,10 @@
   }
   function goToDesktopNav(view) {
     desktopNav = view;
-    if (view === 'dashboard') { dateFilterMode = 'all'; priorityFilter = null; searchQuery = ''; showSettings = false; }
-    else if (view === 'today') { dateFilterMode = 'today'; showSettings = false; }
-    else if (view === 'upcoming') { dateFilterMode = 'all'; showSettings = false; }
-    else if (view === 'checked') { showSettings = false; }
+    if (view === 'dashboard') { dateFilterMode = 'all'; priorityFilter = null; searchQuery = ''; showSettings = false; dueStateFilter = null; }
+    else if (view === 'today') { dateFilterMode = 'today'; showSettings = false; dueStateFilter = null; }
+    else if (view === 'upcoming') { dateFilterMode = 'all'; showSettings = false; dueStateFilter = 'upcoming'; }
+    else if (view === 'checked') { showSettings = false; dueStateFilter = 'checked'; }
     else if (view === 'settings') { showSettings = true; }
     render();
   }
@@ -1507,9 +1532,9 @@
     const checkedCount = reminders.filter(r => r.done).length;
     return `
       <div class="dashboard-stats">
-        <div class="stat-card stat-due"><span class="stat-label">DUE NOW</span><span class="stat-value">${dueTodayCount}</span></div>
-        <div class="stat-card stat-upcoming"><span class="stat-label">UPCOMING</span><span class="stat-value">${upcomingCount}</span></div>
-        <div class="stat-card stat-checked"><span class="stat-label">CHECKED</span><span class="stat-value">${checkedCount}</span></div>
+        <button class="stat-card stat-due ${dueStateFilter === 'due' ? 'stat-active' : ''}" data-stat-filter="due"><span class="stat-label">DUE NOW</span><span class="stat-value">${dueTodayCount}</span></button>
+        <button class="stat-card stat-upcoming ${dueStateFilter === 'upcoming' ? 'stat-active' : ''}" data-stat-filter="upcoming"><span class="stat-label">UPCOMING</span><span class="stat-value">${upcomingCount}</span></button>
+        <button class="stat-card stat-checked ${dueStateFilter === 'checked' ? 'stat-active' : ''}" data-stat-filter="checked"><span class="stat-label">CHECKED</span><span class="stat-value">${checkedCount}</span></button>
       </div>
     `;
   }
@@ -1906,6 +1931,7 @@
 
   function wireEvents() {
     document.querySelectorAll('[data-desktop-nav]').forEach(el => el.addEventListener('click', () => goToDesktopNav(el.dataset.desktopNav)));
+    document.querySelectorAll('[data-stat-filter]').forEach(el => el.addEventListener('click', () => toggleDueStateFilter(el.dataset.statFilter)));
     const selectToggle = document.getElementById('select-toggle');
     if (selectToggle) selectToggle.addEventListener('click', toggleSelectMode);
     const selectAllBtn = document.getElementById('select-all-btn');
