@@ -3,11 +3,16 @@
 // been visited at least once while online. Data sync with Drive still needs
 // a real connection — this only covers the app loading at all.
 
-const CACHE_NAME = 'reminders-app-shell-v1';
+const CACHE_NAME = 'reminders-app-shell-v2';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.add(self.registration.scope))
+    caches.open(CACHE_NAME).then((cache) => cache.addAll([
+      self.registration.scope,
+      'manifest.json',
+      'icon-192.png',
+      'icon-512.png'
+    ]).catch(() => {}))
   );
   self.skipWaiting();
 });
