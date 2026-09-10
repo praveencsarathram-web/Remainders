@@ -169,6 +169,7 @@
     font-size: 11.5px; color: var(--ink); cursor: pointer; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
   }
   .quick-snooze-btn:active { background: var(--ember); color: white; border-color: var(--ember); }
+
   .priority-label { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 13px; color: var(--muted); margin-right: 4px; }
   .priority-dot { width: 27px; height: 27px; border-radius: 50%; border: 2px solid currentColor; cursor: pointer; padding: 0; position: relative; transition: box-shadow 0.12s ease; }
   .priority-dot::before {
@@ -176,6 +177,12 @@
     font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 12px; font-weight: 700; color: currentColor; z-index: 1;
   }
 
+  @media (max-width: 420px) {
+    .priority-row { gap: 5px; }
+    .priority-dot { width: 22px; height: 22px; }
+    .priority-dot::before { font-size: 10px; }
+    .priority-label { font-size: 11.5px; margin-right: 1px; }
+  }
   .p1 .reminder-title { color: var(--p1); }
   .p2 .reminder-title { color: var(--p2); }
   .p3 .reminder-title { color: var(--p3); }
@@ -243,6 +250,8 @@
 
   .edit-btn {
     flex-shrink: 0;
+    align-self: flex-end;
+    margin-bottom: 6px;
     background: var(--done-bg);
     border: none;
     border-radius: 8px;
