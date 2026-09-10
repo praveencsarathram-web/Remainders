@@ -401,6 +401,8 @@
 
   // Google Drive sync state
   let clientId = localStorage.getItem(CLIENT_ID_KEY) || '';
+  let appsScriptUrl = localStorage.getItem('reminders_apps_script_url') || '';
+  let appsScriptSecret = localStorage.getItem('reminders_apps_script_secret') || '';
   let accessToken = null;
   let tokenClient = null;
   let driveFileId = null;
@@ -563,32 +565,66 @@
   function ensureTokenClient() {
     if (tokenClient || !clientId) return;
     if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) return;
-    tokenClient = google.accounts.oauth2.initTokenClient({
+    // Authorization-code flow (not the old implicit flow): Google hands us
+    // a one-time code, which we forward to the Apps Script relay. The relay
+    // exchanges it for tokens and keeps the long-lived refresh token on its
+    // own server-side — the browser never sees it, and never needs to.
+    tokenClient = google.accounts.oauth2.initCodeClient({
       client_id: clientId,
       scope: 'https://www.googleapis.com/auth/drive.file',
+      ux_mode: 'popup',
       callback: async (resp) => {
         if (resp.error) { setDriveStatus('error', resp.error); return; }
-        accessToken = resp.access_token;
+        if (!appsScriptUrl) {
+          setDriveStatus('error', 'No Apps Script relay URL set — add it in Sync settings first.');
+          return;
+        }
         setDriveStatus('connecting');
-        await syncFromDrive();
+        try {
+          const result = await callRelay('exchange', { code: resp.code });
+          if (result.error) { setDriveStatus('error', result.error + (result.detail ? ': ' + result.detail : '')); return; }
+          accessToken = result.access_token;
+          await syncFromDrive();
+        } catch (e) {
+          setDriveStatus('error', e.message || String(e));
+        }
       }
     });
   }
 
+  async function callRelay(action, extra) {
+    const body = Object.assign({ action, secret: appsScriptSecret }, extra || {});
+    const res = await fetch(appsScriptUrl, { method: 'POST', body: JSON.stringify(body) });
+    if (!res.ok) throw new Error('Relay HTTP ' + res.status);
+    return res.json();
+  }
+
+  // Silently mint a fresh access token from the relay — no popup, no user
+  // action. Used on load and whenever the current token expires.
+  async function silentRefresh() {
+    if (!appsScriptUrl || !appsScriptSecret) return false;
+    try {
+      const result = await callRelay('refresh');
+      if (result.error || !result.access_token) return false;
+      accessToken = result.access_token;
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   function connectDrive() {
     if (!clientId) { showSettings = true; render(); return; }
+    if (!appsScriptUrl || !appsScriptSecret) { showSettings = true; render(); return; }
     ensureTokenClient();
     if (!tokenClient) {
       setDriveStatus('error', 'Google sign-in script not ready yet — wait a second and try again.');
       return;
     }
-    tokenClient.requestAccessToken({ prompt: 'consent' });
+    tokenClient.requestCode();
   }
 
   function disconnectDrive() {
-    if (accessToken && window.google && google.accounts && google.accounts.oauth2) {
-      google.accounts.oauth2.revoke(accessToken, () => {});
-    }
     accessToken = null;
     driveFileId = null;
     setDriveStatus('idle');
@@ -597,10 +633,20 @@
   async function driveFetch(url, options) {
     options = options || {};
     options.headers = Object.assign({}, options.headers, { Authorization: 'Bearer ' + accessToken });
-    const res = await fetch(url, options);
+    let res = await fetch(url, options);
     if (res.status === 401) {
-      accessToken = null;
-      throw new Error('Google sign-in expired — reconnect Drive.');
+      // Access token expired (this happens roughly hourly by Google's
+      // design) — silently mint a fresh one via the relay and retry once,
+      // instead of forcing a manual reconnect.
+      const refreshed = await silentRefresh();
+      if (refreshed) {
+        options.headers = Object.assign({}, options.headers, { Authorization: 'Bearer ' + accessToken });
+        res = await fetch(url, options);
+      }
+      if (res.status === 401) {
+        accessToken = null;
+        throw new Error('Google sign-in expired — reconnect Drive.');
+      }
     }
     return res;
   }
@@ -1348,7 +1394,7 @@
   }
   function renderSyncStatus() {
     let label, cls;
-    if (!clientId) { label = 'Drive sync not set up — tap "Sync"'; cls = ''; }
+    if (!clientId || !appsScriptUrl || !appsScriptSecret) { label = 'Drive sync not set up — tap "Sync"'; cls = ''; }
     else if (!accessToken) { label = 'Drive not connected — tap "Sync"'; cls = ''; }
     else if (driveStatus === 'syncing' || driveStatus === 'connecting') { label = 'Syncing with Drive…'; cls = 'on'; }
     else if (driveStatus === 'synced') { label = 'Synced with Google Drive'; cls = 'on'; }
@@ -1369,8 +1415,15 @@
         ${originNote}
         <label for="client-id-input">OAuth Client ID</label>
         <input type="text" id="client-id-input" placeholder="xxxxxxxx.apps.googleusercontent.com" value="${escapeHtml(clientId)}" />
+
+        <label for="apps-script-url-input">Apps Script relay URL</label>
+        <input type="text" id="apps-script-url-input" placeholder="https://script.google.com/macros/s/.../exec" value="${escapeHtml(appsScriptUrl)}" />
+        <label for="apps-script-secret-input">Relay shared secret</label>
+        <input type="text" id="apps-script-secret-input" placeholder="same passphrase you set in the Apps Script" value="${escapeHtml(appsScriptSecret)}" />
+        <p style="font-size:11.5px;">This relay keeps you signed in long-term so you don't need to reconnect every hour. See the setup guide for how to deploy it.</p>
+
         <div class="settings-row">
-          <button class="settings-btn" id="save-client-id">Save Client ID</button>
+          <button class="settings-btn" id="save-client-id">Save settings</button>
           ${accessToken
             ? `<button class="settings-btn secondary" id="disconnect-drive">Disconnect</button><button class="settings-btn secondary" id="sync-now">Sync now</button>`
             : `<button class="settings-btn secondary" id="connect-drive">Connect Google Drive</button>`
@@ -1839,8 +1892,14 @@
     const saveClientIdBtn = document.getElementById('save-client-id');
     if (saveClientIdBtn) saveClientIdBtn.addEventListener('click', () => {
       const val = document.getElementById('client-id-input').value.trim();
+      const urlVal = document.getElementById('apps-script-url-input').value.trim();
+      const secretVal = document.getElementById('apps-script-secret-input').value.trim();
       clientId = val;
+      appsScriptUrl = urlVal;
+      appsScriptSecret = secretVal;
       localStorage.setItem(CLIENT_ID_KEY, val);
+      localStorage.setItem('reminders_apps_script_url', urlVal);
+      localStorage.setItem('reminders_apps_script_secret', secretVal);
       tokenClient = null;
       render();
     });
@@ -1886,6 +1945,24 @@
   setInterval(checkDue, 10000);
   checkDue();
   setInterval(pullFromDrive, 30000);
+
+  // If the Apps Script relay is configured, silently get a fresh token on
+  // load — no popup, no tap — instead of requiring a manual reconnect
+  // every time the app is opened.
+  if (appsScriptUrl && appsScriptSecret) {
+    (async () => {
+      setDriveStatus('connecting');
+      const ok = await silentRefresh();
+      if (ok) { await syncFromDrive(); }
+      else { setDriveStatus('idle'); }
+    })();
+  }
+
+  // Also proactively refresh a bit before the ~1 hour access token would
+  // expire, so a sync in progress never hits a dead token.
+  setInterval(() => {
+    if (accessToken && appsScriptUrl && appsScriptSecret) silentRefresh();
+  }, 45 * 60 * 1000);
 
   // Mobile browsers throttle/pause timers while the tab is backgrounded
   // (screen off, app switched away). The moment it becomes visible again,
