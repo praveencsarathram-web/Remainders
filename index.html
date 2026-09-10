@@ -372,6 +372,7 @@
   let priorityFilter = null;
   let dateFilterMode = 'all'; // 'all' | 'today'
   let showDeleteConfirm = false;
+  let showUncheckConfirm = false;
   let pendingDeleteIds = new Set();
   let pendingPriorityChange = null; // { id, priority }
   let pendingBulkPriority = null; // priority number
@@ -380,6 +381,7 @@
   let editingId = null;
   let liveEditTitle = null;
   let liveEditTime = null;
+  let liveEditPriority = null;
   let liveBulkTime = null;
   let showAddPopup = false;
   let addPriority = 1;
@@ -499,7 +501,7 @@
   function migrateStaleSuppressedFlags() {
     let changed = false;
     reminders.forEach(r => {
-      if (!r.done && r.when && r.suppressedUntil === r.when) {
+      if (r.when && r.suppressedUntil === r.when) {
         const due = new Date(r.when).getTime();
         if (!isNaN(due) && due <= Date.now()) {
           r.suppressedUntil = null;
@@ -520,7 +522,7 @@
     const now = Date.now();
     alarmQueue = alarmQueue.filter(id => {
       const r = reminders.find(r => r.id === id);
-      if (!r || r.done || !r.when) return false;
+      if (!r || !r.when) return false;
       const due = new Date(r.when).getTime();
       if (isNaN(due) || due > now) return false;
       if (r.suppressedUntil === r.when) return false;
@@ -802,6 +804,7 @@
     editingId = id;
     liveEditTitle = null;
     liveEditTime = null;
+    liveEditPriority = r ? (r.priority || 3) : 3;
     editAnchorTime = (r && r.when) ? r.when : new Date().toISOString();
     render();
   }
@@ -809,7 +812,12 @@
     editingId = null;
     liveEditTitle = null;
     liveEditTime = null;
+    liveEditPriority = null;
     editAnchorTime = null;
+    render();
+  }
+  function setEditPriority(p) {
+    liveEditPriority = p;
     render();
   }
   function saveEdit(id, title, whenValue) {
@@ -818,12 +826,14 @@
       const trimmed = title.trim();
       if (trimmed) r.title = trimmed;
       r.when = whenValue ? new Date(whenValue).toISOString() : null;
+      if (liveEditPriority) r.priority = liveEditPriority;
       r.suppressedUntil = null;
       r.updated = Date.now();
     }
     editingId = null;
     liveEditTitle = null;
     liveEditTime = null;
+    liveEditPriority = null;
     editAnchorTime = null;
     save();
     render();
@@ -911,6 +921,19 @@
     reminders.forEach(r => { if (selectedIds.has(r.id)) { r.done = false; r.completedAt = null; r.updated = Date.now(); } });
     save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkBarExpanded = false; render();
   }
+  function requestBulkMarkIncomplete() {
+    if (selectedIds.size === 0) return;
+    showUncheckConfirm = true;
+    render();
+  }
+  function confirmBulkMarkIncomplete() {
+    showUncheckConfirm = false;
+    bulkMarkIncomplete();
+  }
+  function cancelBulkMarkIncomplete() {
+    showUncheckConfirm = false;
+    render();
+  }
   function deleteBulk() {
     pendingDeleteIds = new Set(selectedIds);
     showDeleteConfirm = true;
@@ -921,7 +944,7 @@
     reminders = reminders.filter(r => !pendingDeleteIds.has(r.id));
     alarmQueue = alarmQueue.filter(id => !pendingDeleteIds.has(id));
     if (lockedAlarmId && pendingDeleteIds.has(lockedAlarmId)) lockedAlarmId = null;
-    if (editingId && pendingDeleteIds.has(editingId)) { editingId = null; editAnchorTime = null; liveEditTitle = null; liveEditTime = null; }
+    if (editingId && pendingDeleteIds.has(editingId)) { editingId = null; editAnchorTime = null; liveEditTitle = null; liveEditTime = null; liveEditPriority = null; }
     save();
     showDeleteConfirm = false;
     pendingDeleteIds = new Set();
@@ -949,6 +972,7 @@
     editingId = id;
     liveEditTitle = null;
     liveEditTime = null;
+    liveEditPriority = r ? (r.priority || 3) : 3;
     editAnchorTime = (r && r.when) ? r.when : new Date().toISOString();
     render();
   }
@@ -1049,25 +1073,12 @@
   function checkDue() {
     const now = Date.now();
 
-    // Reopen anything that was marked done *before* its due time arrived —
-    // an "early" completion doesn't count once the actual due moment hits.
-    let reopened = false;
-    reminders.forEach(r => {
-      if (!r.done || !r.when || !r.completedAt) return;
-      const due = new Date(r.when).getTime();
-      if (isNaN(due) || due > now) return;
-      if (r.completedAt >= due) return; // completed at/after due time — this is final, leave it
-      r.done = false;
-      r.completedAt = null;
-      r.suppressedUntil = null;
-      r.updated = Date.now();
-      reopened = true;
-    });
-
     let newlyFired = false;
     let newlyFiredReminders = [];
     reminders.forEach(r => {
-      if (r.done || !r.when) return;
+      // Checking a reminder off no longer silences it — only deleting it or
+      // pushing its time into the future actually stops the alerts.
+      if (!r.when) return;
       const due = new Date(r.when).getTime();
       if (isNaN(due) || due > now) return;
       if (r.suppressedUntil === r.when) return;
@@ -1083,7 +1094,6 @@
       if (!a || !b) return 0;
       return (a.priority - b.priority) || (new Date(a.when) - new Date(b.when));
     });
-    if (reopened) save();
     if (newlyFired) {
       beep();
       newlyFiredReminders.forEach(notifyOS);
@@ -1107,8 +1117,18 @@
     snoozeCurrent(id, 1);
   }
   function completeCurrent(id) {
+    // Checking something off is just a tracking note now — it doesn't stop
+    // the alerts. It keeps re-appearing every minute like Dismiss, until
+    // you delete it or push its time forward.
     const r = reminders.find(r => r.id === id);
-    if (r) { r.done = true; r.completedAt = Date.now(); r.updated = Date.now(); save(); }
+    if (r) {
+      r.done = true;
+      r.completedAt = Date.now();
+      r.when = new Date(Date.now() + 60000).toISOString();
+      r.suppressedUntil = null;
+      r.updated = Date.now();
+      save();
+    }
     alarmQueue = alarmQueue.filter(qid => qid !== id); if (lockedAlarmId === id) lockedAlarmId = null; render();
   }
   function togglePauseAlerts() {
@@ -1208,6 +1228,7 @@
       ${showAddPopup ? renderAddPopup(savedTitleValue, savedTimeValue) : ''}
       ${alarmQueue.length && !alertsPaused && !editingId ? renderAlarm() : ''}
       ${showDeleteConfirm ? renderDeleteConfirm() : ''}
+      ${showUncheckConfirm ? renderUncheckConfirm() : ''}
       ${pendingPriorityChange ? renderPriorityConfirm() : ''}
       ${pendingBulkPriority !== null ? renderBulkPriorityConfirm() : ''}
     `;
@@ -1290,7 +1311,7 @@
     let html = '';
     if (active.length) html += `<div class="reminder-list">${active.map(renderItem).join('')}</div>`;
     if (done.length) {
-      html += `<div class="section-label">Completed</div>`;
+      html += `<div class="section-label">Checked</div>`;
       html += `<div class="reminder-list">${done.map(renderItem).join('')}</div>`;
     }
     return html;
@@ -1304,8 +1325,9 @@
     if (editingId === r.id) {
       const titleVal = liveEditTitle !== null ? liveEditTitle : r.title;
       const timeVal = liveEditTime !== null ? liveEditTime : isoToLocalInputValue(r.when);
+      const previewPriority = liveEditPriority || priority;
       return `
-        <div class="reminder p${priority}">
+        <div class="reminder p${previewPriority}">
           <div class="reminder-body" style="width:100%;">
             <input type="text" class="edit-title-input" id="edit-title-${r.id}" value="${escapeHtml(titleVal)}" />
             <input type="datetime-local" class="edit-time-input" id="edit-time-${r.id}" value="${timeVal}" />
@@ -1322,6 +1344,10 @@
               <button class="snooze-btn" data-edit-bump-abs="${r.id}" data-hour="5">5 AM</button>
               <button class="snooze-btn" data-edit-bump-abs="${r.id}" data-hour="13">1 PM</button>
               <button class="snooze-btn" data-edit-bump-abs="${r.id}" data-hour="17">5 PM</button>
+            </div>
+            <p class="snooze-label" style="margin:10px 0 6px;">Priority</p>
+            <div class="priority-row" style="margin-top:0;">
+              ${[1,2,3,4,5].map(p => priorityDotHtml(p, liveEditPriority === p, `data-edit-priority="${r.id}"`)).join('')}
             </div>
             <div class="edit-actions" style="margin-top:10px;">
               <button class="edit-save-btn" data-save-edit="${r.id}">Save</button>
@@ -1401,7 +1427,7 @@
           <button class="bulk-chip" data-preset="${in1h}">In 1 hour</button>
           <button class="bulk-chip" data-preset="${nowLocalInputValue(24*60*60000)}">Same time tomorrow</button>
           <button class="bulk-chip" data-preset="${tomorrow9.getFullYear() + '-' + pad(tomorrow9.getMonth()+1) + '-' + pad(tomorrow9.getDate()) + 'T09:00'}">Tomorrow, 9 AM</button>
-          <button class="bulk-chip" id="bulk-reopen">Mark not completed</button>
+          <button class="bulk-chip" id="bulk-reopen">Mark not checked</button>
           <button class="bulk-chip" id="bulk-export">Export to Excel</button>
           <button class="bulk-delete" id="bulk-delete">Delete selected</button>
         </div>
@@ -1428,6 +1454,20 @@
       </div>
     `;
   }
+  function renderUncheckConfirm() {
+    return `
+      <div class="alarm-overlay">
+        <div class="alarm-card">
+          <div class="alarm-glyph">?</div>
+          <p class="alarm-title">Mark ${selectedIds.size} reminder${selectedIds.size === 1 ? '' : 's'} not checked?</p>
+          <div class="alarm-actions">
+            <button class="alarm-done-btn" id="confirm-uncheck-btn">Mark not checked</button>
+            <button class="alarm-dismiss-btn" id="cancel-uncheck-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
 
   function renderPriorityConfirm() {
     const r = reminders.find(r => r.id === pendingPriorityChange.id);
@@ -1435,11 +1475,9 @@
     return `
       <div class="alarm-overlay">
         <div class="alarm-card">
-          <div class="alarm-glyph">?</div>
-          <p class="alarm-title">${escapeHtml(r.title)}</p>
-          <p class="alarm-time">Change priority from ${r.priority || 3} to ${pendingPriorityChange.priority}?</p>
+          <p class="alarm-title" style="font-size:32px; font-weight:700; margin:10px 0 22px;">Move to ${pendingPriorityChange.priority}</p>
           <div class="alarm-actions">
-            <button class="alarm-done-btn" id="confirm-priority-btn">Change priority</button>
+            <button class="alarm-done-btn" id="confirm-priority-btn">Confirm</button>
             <button class="alarm-dismiss-btn" id="cancel-priority-btn">Cancel</button>
           </div>
         </div>
@@ -1450,11 +1488,10 @@
     return `
       <div class="alarm-overlay">
         <div class="alarm-card">
-          <div class="alarm-glyph">?</div>
-          <p class="alarm-title">${selectedIds.size} reminder${selectedIds.size === 1 ? '' : 's'}</p>
-          <p class="alarm-time">Set priority to ${pendingBulkPriority} for all selected?</p>
+          <p class="alarm-title" style="font-size:32px; font-weight:700; margin:10px 0 4px;">Move to ${pendingBulkPriority}</p>
+          <p class="alarm-time">${selectedIds.size} reminder${selectedIds.size === 1 ? '' : 's'}</p>
           <div class="alarm-actions">
-            <button class="alarm-done-btn" id="confirm-bulk-priority-btn">Set priority</button>
+            <button class="alarm-done-btn" id="confirm-bulk-priority-btn">Confirm</button>
             <button class="alarm-dismiss-btn" id="cancel-bulk-priority-btn">Cancel</button>
           </div>
         </div>
@@ -1511,7 +1548,7 @@
           <p class="alarm-title">${escapeHtml(r.title)}</p>
           <p class="alarm-time">Was due ${fmtTime(r.when)}</p>
           <div class="alarm-actions">
-            <button class="alarm-done-btn" id="alarm-complete" data-alarm-id="${displayId}">Mark done</button>
+            <button class="alarm-done-btn" id="alarm-complete" data-alarm-id="${displayId}">Mark checked</button>
             <button class="alarm-dismiss-btn" id="alarm-dismiss" data-alarm-id="${displayId}">Dismiss</button>
           </div>
           <div class="alarm-actions" style="margin-bottom:14px;">
@@ -1577,6 +1614,7 @@
     document.querySelectorAll('.check').forEach(el => el.addEventListener('click', () => toggleDone(el.dataset.id)));
     document.querySelectorAll('[data-pick]').forEach(el => el.addEventListener('click', () => togglePick(el.dataset.pick)));
     document.querySelectorAll('[data-priority-id]').forEach(el => el.addEventListener('click', () => requestPriorityChange(el.dataset.priorityId, parseInt(el.dataset.p, 10))));
+    document.querySelectorAll('[data-edit-priority]').forEach(el => el.addEventListener('click', () => setEditPriority(parseInt(el.dataset.p, 10))));
     document.querySelectorAll('[data-alarm-priority-id]').forEach(el => el.addEventListener('click', () => setPriority(el.dataset.alarmPriorityId, parseInt(el.dataset.p, 10))));
     document.querySelectorAll('[data-edit-id]').forEach(el => el.addEventListener('click', () => startEdit(el.dataset.editId)));
     document.querySelectorAll('[data-edit-bump]').forEach(el => el.addEventListener('click', () => { bumpEditTime(el.dataset.editBump, parseInt(el.dataset.minutes, 10)); markSnoozeSelected(el); }));
@@ -1611,7 +1649,11 @@
     const cancelBulkPriorityBtn = document.getElementById('cancel-bulk-priority-btn');
     if (cancelBulkPriorityBtn) cancelBulkPriorityBtn.addEventListener('click', cancelBulkPriority);
     const bulkReopen = document.getElementById('bulk-reopen');
-    if (bulkReopen) bulkReopen.addEventListener('click', bulkMarkIncomplete);
+    if (bulkReopen) bulkReopen.addEventListener('click', requestBulkMarkIncomplete);
+    const confirmUncheckBtn = document.getElementById('confirm-uncheck-btn');
+    if (confirmUncheckBtn) confirmUncheckBtn.addEventListener('click', confirmBulkMarkIncomplete);
+    const cancelUncheckBtn = document.getElementById('cancel-uncheck-btn');
+    if (cancelUncheckBtn) cancelUncheckBtn.addEventListener('click', cancelBulkMarkIncomplete);
     const bulkExport = document.getElementById('bulk-export');
     if (bulkExport) bulkExport.addEventListener('click', exportSelectedToExcel);
     const bulkApply = document.getElementById('bulk-apply');
