@@ -1430,7 +1430,8 @@
               <button class="snooze-btn" data-edit-bump-abs="${r.id}" data-hour="13">1 PM</button>
               <button class="snooze-btn" data-edit-bump-abs="${r.id}" data-hour="17">5 PM</button>
             </div>
-            <p class="snooze-label" style="margin:10px 0 6px;">Priority</p>
+            <p class="snooze-label" style="margin:10px 0 2px;">Priority</p>
+            <p class="alarm-title" style="font-size:17px; font-weight:700; color:${PRIORITY_META[previewPriority]}; margin:0 0 6px;">Priority ${previewPriority}</p>
             <div class="priority-row" style="margin-top:0;">
               ${[1,2,3,4,5].map(p => priorityDotHtml(p, liveEditPriority === p, `data-edit-priority="${r.id}"`)).join('')}
             </div>
@@ -1604,8 +1605,8 @@
     return `
       <div class="alarm-overlay">
         <div class="alarm-card">
-          <div class="alarm-glyph">+</div>
-          <p class="alarm-title" style="margin-bottom:14px;">New reminder</p>
+          <p class="alarm-title" style="font-size:22px; font-weight:700; color:${PRIORITY_META[addPriority]}; margin-bottom:4px;">Priority ${addPriority}</p>
+          <p class="alarm-title" style="margin-top:-6px; margin-bottom:14px;">New reminder</p>
           <input type="text" class="edit-title-input" id="add-popup-title" placeholder="Remind me to..." value="${escapeHtml(titleValue)}" />
           <input type="datetime-local" class="edit-time-input" id="add-popup-time" value="${timeValue}" />
           <p class="snooze-label" style="margin-top:10px;">Push time forward by</p>
@@ -1660,8 +1661,8 @@
       return `
         <div class="alarm-overlay">
           <div class="alarm-card">
-            <div class="alarm-glyph">&#9200;</div>
-            <p class="alarm-title" style="margin-bottom:14px;">Edit reminder</p>
+            <p class="alarm-title" style="font-size:22px; font-weight:700; color:${PRIORITY_META[alarmEditPriority]}; margin-bottom:4px;">Priority ${alarmEditPriority}</p>
+            <p class="alarm-title" style="margin-top:-6px; margin-bottom:14px;">Edit reminder</p>
             <input type="text" class="edit-title-input" id="alarm-edit-title" value="${escapeHtml(titleVal)}" />
             <input type="datetime-local" class="edit-time-input" id="alarm-edit-time" value="${timeVal}" />
             <p class="snooze-label" style="margin-top:10px;">Push time forward by</p>
