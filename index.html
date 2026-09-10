@@ -487,7 +487,27 @@
       const raw = localStorage.getItem(LOCAL_KEY);
       if (raw) reminders = JSON.parse(raw);
     } catch (e) { reminders = []; }
+    migrateStaleSuppressedFlags();
     loaded = true;
+  }
+
+  // One-time cleanup: under the old Dismiss behavior, dismissing set
+  // suppressedUntil permanently for that due time. Anything still carrying
+  // that flag from before Dismiss was changed to "repeat in 1 minute" would
+  // otherwise never pop up again. Clear it for anything currently overdue
+  // so it gets a fresh chance under the current logic.
+  function migrateStaleSuppressedFlags() {
+    let changed = false;
+    reminders.forEach(r => {
+      if (!r.done && r.when && r.suppressedUntil === r.when) {
+        const due = new Date(r.when).getTime();
+        if (!isNaN(due) && due <= Date.now()) {
+          r.suppressedUntil = null;
+          changed = true;
+        }
+      }
+    });
+    if (changed) saveLocal();
   }
 
   /* Central save: writes locally immediately, then pushes to Drive if connected */
@@ -623,6 +643,7 @@
         const text = await readDriveFile(file.id);
         const remote = JSON.parse(text || '[]');
         reminders = mergeReminders(reminders, remote);
+        migrateStaleSuppressedFlags();
         pruneAlarmQueue();
         saveLocal();
       } else {
@@ -676,6 +697,7 @@
       const merged = mergeReminders(reminders, remote);
       if (JSON.stringify(merged) !== JSON.stringify(reminders)) {
         reminders = merged;
+        migrateStaleSuppressedFlags();
         pruneAlarmQueue();
         saveLocal();
         render();
