@@ -1946,6 +1946,14 @@
   checkDue();
   setInterval(pullFromDrive, 30000);
 
+  // Register the offline shell so the page itself can still load with no
+  // internet connection, once it's been opened at least once while online.
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    });
+  }
+
   // If the Apps Script relay is configured, silently get a fresh token on
   // load — no popup, no tap — instead of requiring a manual reconnect
   // every time the app is opened.
