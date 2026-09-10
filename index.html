@@ -381,6 +381,10 @@
   let selectMode = false;
   let selectedIds = new Set();
   let alarmQueue = [];
+  let datetimePickerOpen = false; // true while a native date/time picker is
+                                   // likely open — background re-renders get
+                                   // suppressed so they don't destroy the
+                                   // input and silently close the picker.
   let lockedAlarmId = null; // once a popup is shown, it stays locked to this
                              // exact reminder until acted on — new arrivals
                              // can't swap it out from under a mid-tap.
@@ -1285,6 +1289,11 @@
      RENDER
      ========================================================= */
   function render() {
+    // A native date/time picker is likely open right now — rebuilding the
+    // DOM would destroy the input it's anchored to and silently close it.
+    // Skip this rebuild entirely; a render will run again once it closes.
+    if (datetimePickerOpen) return;
+
     const titleField = document.getElementById('add-popup-title');
     const wasFocused = document.activeElement === titleField;
     const savedTitleValue = titleField ? titleField.value : '';
@@ -1986,6 +1995,18 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       pullFromDrive().then(checkDue).catch(checkDue);
+    }
+  });
+
+  // Track whether a native date/time picker is likely open, so background
+  // refreshes can avoid rebuilding the DOM out from under it.
+  document.addEventListener('focusin', (e) => {
+    if (e.target && e.target.type === 'datetime-local') datetimePickerOpen = true;
+  });
+  document.addEventListener('focusout', (e) => {
+    if (e.target && e.target.type === 'datetime-local') {
+      datetimePickerOpen = false;
+      render(); // catch up on anything that was suppressed while it was open
     }
   });
 })();
