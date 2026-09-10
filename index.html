@@ -387,6 +387,11 @@
   let addPriority = 1;
   let addAnchorTime = null;
   let editAnchorTime = null;
+  let alarmEditing = false;
+  let alarmEditPriority = null;
+  let alarmEditAnchorTime = null;
+  let liveAlarmEditTitle = null;
+  let liveAlarmEditTime = null;
 
   // Google Drive sync state
   let clientId = localStorage.getItem(CLIENT_ID_KEY) || '';
@@ -967,13 +972,56 @@
   function editFromAlarm(id) {
     if (!id) return;
     const r = reminders.find(r => r.id === id);
-    if (r) { r.suppressedUntil = r.when; r.updated = Date.now(); save(); }
-    alarmQueue = alarmQueue.filter(qid => qid !== id); if (lockedAlarmId === id) lockedAlarmId = null;
-    editingId = id;
-    liveEditTitle = null;
-    liveEditTime = null;
-    liveEditPriority = r ? (r.priority || 3) : 3;
-    editAnchorTime = (r && r.when) ? r.when : new Date().toISOString();
+    alarmEditing = true;
+    alarmEditPriority = r ? (r.priority || 3) : 3;
+    alarmEditAnchorTime = (r && r.when) ? r.when : new Date().toISOString();
+    liveAlarmEditTitle = null;
+    liveAlarmEditTime = null;
+    render();
+  }
+  function cancelAlarmEdit() {
+    alarmEditing = false;
+    alarmEditPriority = null;
+    alarmEditAnchorTime = null;
+    liveAlarmEditTitle = null;
+    liveAlarmEditTime = null;
+    render();
+  }
+  function setAlarmEditPriority(p) {
+    alarmEditPriority = p;
+    render();
+  }
+  function bumpAlarmEditTime(minutes) {
+    const el = document.getElementById('alarm-edit-time');
+    if (!el) return;
+    const base = alarmEditAnchorTime ? new Date(alarmEditAnchorTime) : new Date();
+    el.value = isoToLocalInputValue(new Date(base.getTime() + minutes * 60000).toISOString());
+  }
+  function bumpAlarmEditTimeAbsolute(hour) {
+    const el = document.getElementById('alarm-edit-time');
+    if (!el) return;
+    el.value = isoToLocalInputValue(nextOccurrenceISO(hour));
+  }
+  function saveAlarmEdit() {
+    const id = lockedAlarmId;
+    const titleEl = document.getElementById('alarm-edit-title');
+    const timeEl = document.getElementById('alarm-edit-time');
+    const r = reminders.find(r => r.id === id);
+    if (r && titleEl && timeEl) {
+      const trimmed = titleEl.value.trim();
+      if (trimmed) r.title = trimmed;
+      r.when = timeEl.value ? new Date(timeEl.value).toISOString() : null;
+      if (alarmEditPriority) r.priority = alarmEditPriority;
+      r.suppressedUntil = null;
+      r.updated = Date.now();
+      save(); // also prunes the queue automatically if this is no longer due
+    }
+    alarmEditing = false;
+    alarmEditPriority = null;
+    alarmEditAnchorTime = null;
+    liveAlarmEditTitle = null;
+    liveAlarmEditTime = null;
+    if (lockedAlarmId === id && !alarmQueue.includes(id)) lockedAlarmId = null;
     render();
   }
   function deleteFromEdit(id) {
@@ -1178,6 +1226,14 @@
     const bulkTimeFocused = document.activeElement === bulkTimeField;
     liveBulkTime = bulkTimeField ? bulkTimeField.value : null;
 
+    // And for the in-popup alarm-edit fields.
+    const alarmEditTitleField = alarmEditing ? document.getElementById('alarm-edit-title') : null;
+    const alarmEditTitleFocused = document.activeElement === alarmEditTitleField;
+    const alarmEditTitleCaret = alarmEditTitleField ? alarmEditTitleField.selectionStart : null;
+    liveAlarmEditTitle = alarmEditTitleField ? alarmEditTitleField.value : null;
+    const alarmEditTimeField = alarmEditing ? document.getElementById('alarm-edit-time') : null;
+    liveAlarmEditTime = alarmEditTimeField ? alarmEditTimeField.value : null;
+
     const active = sortList(reminders.filter(r => !r.done && matchesFilters(r)));
     const done = sortList(reminders.filter(r => r.done && matchesFilters(r)));
     const totalActiveCount = reminders.filter(r => !r.done).length;
@@ -1250,6 +1306,10 @@
     if (bulkTimeFocused) {
       const el = document.getElementById('bulk-time');
       if (el) el.focus();
+    }
+    if (alarmEditTitleFocused) {
+      const el = document.getElementById('alarm-edit-title');
+      if (el) { el.focus(); if (alarmEditTitleCaret !== null) el.setSelectionRange(alarmEditTitleCaret, alarmEditTitleCaret); }
     }
   }
 
@@ -1541,6 +1601,44 @@
     const r = reminders.find(r => r.id === displayId);
     if (!r) { lockedAlarmId = null; return ''; }
     const priority = r.priority || 3;
+
+    if (alarmEditing) {
+      const titleVal = liveAlarmEditTitle !== null ? liveAlarmEditTitle : r.title;
+      const timeVal = liveAlarmEditTime !== null ? liveAlarmEditTime : isoToLocalInputValue(r.when);
+      return `
+        <div class="alarm-overlay">
+          <div class="alarm-card">
+            <div class="alarm-glyph">&#9200;</div>
+            <p class="alarm-title" style="margin-bottom:14px;">Edit reminder</p>
+            <input type="text" class="edit-title-input" id="alarm-edit-title" value="${escapeHtml(titleVal)}" />
+            <input type="datetime-local" class="edit-time-input" id="alarm-edit-time" value="${timeVal}" />
+            <p class="snooze-label" style="margin-top:10px;">Push time forward by</p>
+            <div class="snooze-grid">
+              <button class="snooze-btn" data-alarm-edit-bump="1">1m</button>
+              <button class="snooze-btn" data-alarm-edit-bump="5">5m</button>
+              <button class="snooze-btn" data-alarm-edit-bump="10">10m</button>
+              <button class="snooze-btn" data-alarm-edit-bump="15">15m</button>
+              <button class="snooze-btn" data-alarm-edit-bump="30">30m</button>
+              <button class="snooze-btn" data-alarm-edit-bump="60">1h</button>
+              <button class="snooze-btn" data-alarm-edit-bump="120">2h</button>
+              <button class="snooze-btn" data-alarm-edit-bump="300">5h</button>
+              <button class="snooze-btn" data-alarm-edit-bump-abs="5">5 AM</button>
+              <button class="snooze-btn" data-alarm-edit-bump-abs="13">1 PM</button>
+              <button class="snooze-btn" data-alarm-edit-bump-abs="17">5 PM</button>
+            </div>
+            <p class="snooze-label">Priority</p>
+            <div class="priority-row" style="justify-content:center; margin-top:0;">
+              ${[1,2,3,4,5].map(p => priorityDotHtml(p, alarmEditPriority === p, `data-alarm-edit-priority="${p}"`)).join('')}
+            </div>
+            <div class="alarm-actions" style="margin-top:18px;">
+              <button class="alarm-done-btn" id="alarm-edit-save">Save</button>
+              <button class="alarm-dismiss-btn" id="alarm-edit-cancel">Cancel</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
     return `
       <div class="alarm-overlay">
         <div class="alarm-card">
@@ -1674,6 +1772,14 @@
     if (alarmEdit) alarmEdit.addEventListener('click', () => editFromAlarm(alarmEdit.dataset.alarmId));
     document.querySelectorAll('[data-snooze]').forEach(el => el.addEventListener('click', () => snoozeCurrent(el.dataset.alarmId, parseInt(el.dataset.snooze, 10))));
     document.querySelectorAll('[data-snooze-abs]').forEach(el => el.addEventListener('click', () => snoozeCurrentAbsolute(el.dataset.alarmId, parseInt(el.dataset.snoozeAbs, 10))));
+
+    const alarmEditSave = document.getElementById('alarm-edit-save');
+    if (alarmEditSave) alarmEditSave.addEventListener('click', saveAlarmEdit);
+    const alarmEditCancel = document.getElementById('alarm-edit-cancel');
+    if (alarmEditCancel) alarmEditCancel.addEventListener('click', cancelAlarmEdit);
+    document.querySelectorAll('[data-alarm-edit-bump]').forEach(el => el.addEventListener('click', () => { bumpAlarmEditTime(parseInt(el.dataset.alarmEditBump, 10)); markSnoozeSelected(el); }));
+    document.querySelectorAll('[data-alarm-edit-bump-abs]').forEach(el => el.addEventListener('click', () => { bumpAlarmEditTimeAbsolute(parseInt(el.dataset.alarmEditBumpAbs, 10)); markSnoozeSelected(el); }));
+    document.querySelectorAll('[data-alarm-edit-priority]').forEach(el => el.addEventListener('click', () => setAlarmEditPriority(parseInt(el.dataset.alarmEditPriority, 10))));
 
     const saveClientIdBtn = document.getElementById('save-client-id');
     if (saveClientIdBtn) saveClientIdBtn.addEventListener('click', () => {
