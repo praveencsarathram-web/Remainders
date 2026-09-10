@@ -366,6 +366,8 @@
   let dateFilterMode = 'all'; // 'all' | 'today'
   let showDeleteConfirm = false;
   let pendingDeleteIds = new Set();
+  let pendingPriorityChange = null; // { id, priority }
+  let pendingBulkPriority = null; // priority number
   let sortMode = 'due'; // 'due' | 'priority'
   let editingId = null;
   let liveEditTitle = null;
@@ -442,7 +444,7 @@
     2: 'var(--ember)',
     3: 'var(--gold)',
     4: 'var(--gold)',
-    5: 'var(--ink)'
+    5: 'var(--ember)'
   };
   function priorityDotHtml(p, checked, extraAttrs) {
     const color = PRIORITY_META[p];
@@ -723,6 +725,22 @@
     save();
     render();
   }
+  function requestPriorityChange(id, priority) {
+    const r = reminders.find(r => r.id === id);
+    if (!r || r.priority === priority) return;
+    pendingPriorityChange = { id, priority };
+    render();
+  }
+  function confirmPriorityChange() {
+    if (!pendingPriorityChange) return;
+    const { id, priority } = pendingPriorityChange;
+    pendingPriorityChange = null;
+    setPriority(id, priority);
+  }
+  function cancelPriorityChange() {
+    pendingPriorityChange = null;
+    render();
+  }
   function startEdit(id) {
     const r = reminders.find(r => r.id === id);
     editingId = id;
@@ -813,6 +831,25 @@
     if (!iso) return;
     reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = new Date(iso).toISOString(); r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); } });
     save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; render();
+  }
+  function applyBulkPriority(p) {
+    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.priority = p; r.updated = Date.now(); } });
+    save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; render();
+  }
+  function requestBulkPriority(p) {
+    if (selectedIds.size === 0) return;
+    pendingBulkPriority = p;
+    render();
+  }
+  function confirmBulkPriority() {
+    if (pendingBulkPriority === null) return;
+    const p = pendingBulkPriority;
+    pendingBulkPriority = null;
+    applyBulkPriority(p);
+  }
+  function cancelBulkPriority() {
+    pendingBulkPriority = null;
+    render();
   }
   function bulkMarkIncomplete() {
     reminders.forEach(r => { if (selectedIds.has(r.id)) { r.done = false; r.completedAt = null; r.updated = Date.now(); } });
@@ -1120,6 +1157,8 @@
       ${showAddPopup ? renderAddPopup(savedTitleValue, savedTimeValue) : ''}
       ${alarmQueue.length && !alertsPaused && !editingId ? renderAlarm() : ''}
       ${showDeleteConfirm ? renderDeleteConfirm() : ''}
+      ${pendingPriorityChange ? renderPriorityConfirm() : ''}
+      ${pendingBulkPriority !== null ? renderBulkPriorityConfirm() : ''}
     `;
 
     wireEvents();
@@ -1261,7 +1300,11 @@
     return `
       <div class="bulk-bar">
         <div class="bulk-row1"><span class="bulk-count">${selectedIds.size} selected</span><button class="bulk-cancel" id="bulk-cancel">Clear</button></div>
-        <p class="snooze-label" style="margin:0;">Snooze all for</p>
+        <p class="snooze-label" style="margin:0;">Set priority to</p>
+        <div class="priority-row" style="margin-top:0;">
+          ${[1,2,3,4,5].map(p => priorityDotHtml(p, false, `data-bulk-priority="${p}"`)).join('')}
+        </div>
+        <p class="snooze-label" style="margin:10px 0 0;">Snooze all for</p>
         <div class="snooze-grid">
           <button class="snooze-btn" data-bulk-snooze="5">5m</button>
           <button class="snooze-btn" data-bulk-snooze="10">10m</button>
@@ -1301,6 +1344,39 @@
           <div class="alarm-actions">
             <button class="alarm-done-btn" id="confirm-delete-btn" style="background:var(--ember);">Delete</button>
             <button class="alarm-dismiss-btn" id="cancel-delete-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderPriorityConfirm() {
+    const r = reminders.find(r => r.id === pendingPriorityChange.id);
+    if (!r) return '';
+    return `
+      <div class="alarm-overlay">
+        <div class="alarm-card">
+          <div class="alarm-glyph">?</div>
+          <p class="alarm-title">${escapeHtml(r.title)}</p>
+          <p class="alarm-time">Change priority from ${r.priority || 3} to ${pendingPriorityChange.priority}?</p>
+          <div class="alarm-actions">
+            <button class="alarm-done-btn" id="confirm-priority-btn">Change priority</button>
+            <button class="alarm-dismiss-btn" id="cancel-priority-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+  function renderBulkPriorityConfirm() {
+    return `
+      <div class="alarm-overlay">
+        <div class="alarm-card">
+          <div class="alarm-glyph">?</div>
+          <p class="alarm-title">${selectedIds.size} reminder${selectedIds.size === 1 ? '' : 's'}</p>
+          <p class="alarm-time">Set priority to ${pendingBulkPriority} for all selected?</p>
+          <div class="alarm-actions">
+            <button class="alarm-done-btn" id="confirm-bulk-priority-btn">Set priority</button>
+            <button class="alarm-dismiss-btn" id="cancel-bulk-priority-btn">Cancel</button>
           </div>
         </div>
       </div>
@@ -1416,7 +1492,7 @@
 
     document.querySelectorAll('.check').forEach(el => el.addEventListener('click', () => toggleDone(el.dataset.id)));
     document.querySelectorAll('[data-pick]').forEach(el => el.addEventListener('click', () => togglePick(el.dataset.pick)));
-    document.querySelectorAll('[data-priority-id]').forEach(el => el.addEventListener('click', () => setPriority(el.dataset.priorityId, parseInt(el.dataset.p, 10))));
+    document.querySelectorAll('[data-priority-id]').forEach(el => el.addEventListener('click', () => requestPriorityChange(el.dataset.priorityId, parseInt(el.dataset.p, 10))));
     document.querySelectorAll('[data-alarm-priority-id]').forEach(el => el.addEventListener('click', () => setPriority(el.dataset.alarmPriorityId, parseInt(el.dataset.p, 10))));
     document.querySelectorAll('[data-edit-id]').forEach(el => el.addEventListener('click', () => startEdit(el.dataset.editId)));
     document.querySelectorAll('[data-edit-bump]').forEach(el => el.addEventListener('click', () => { bumpEditTime(el.dataset.editBump, parseInt(el.dataset.minutes, 10)); markSnoozeSelected(el); }));
@@ -1438,6 +1514,14 @@
     if (confirmDeleteBtn) confirmDeleteBtn.addEventListener('click', confirmDelete);
     const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
     if (cancelDeleteBtn) cancelDeleteBtn.addEventListener('click', cancelDelete);
+    const confirmPriorityBtn = document.getElementById('confirm-priority-btn');
+    if (confirmPriorityBtn) confirmPriorityBtn.addEventListener('click', confirmPriorityChange);
+    const cancelPriorityBtn = document.getElementById('cancel-priority-btn');
+    if (cancelPriorityBtn) cancelPriorityBtn.addEventListener('click', cancelPriorityChange);
+    const confirmBulkPriorityBtn = document.getElementById('confirm-bulk-priority-btn');
+    if (confirmBulkPriorityBtn) confirmBulkPriorityBtn.addEventListener('click', confirmBulkPriority);
+    const cancelBulkPriorityBtn = document.getElementById('cancel-bulk-priority-btn');
+    if (cancelBulkPriorityBtn) cancelBulkPriorityBtn.addEventListener('click', cancelBulkPriority);
     const bulkReopen = document.getElementById('bulk-reopen');
     if (bulkReopen) bulkReopen.addEventListener('click', bulkMarkIncomplete);
     const bulkExport = document.getElementById('bulk-export');
@@ -1448,6 +1532,7 @@
     document.querySelectorAll('.bulk-chip').forEach(el => el.addEventListener('click', () => applyBulkTime(el.dataset.preset)));
     document.querySelectorAll('[data-bulk-snooze]').forEach(el => el.addEventListener('click', () => applyBulkSnooze(parseInt(el.dataset.bulkSnooze, 10))));
     document.querySelectorAll('[data-bulk-snooze-abs]').forEach(el => el.addEventListener('click', () => applyBulkSnoozeAbsolute(parseInt(el.dataset.bulkSnoozeAbs, 10))));
+    document.querySelectorAll('[data-bulk-priority]').forEach(el => el.addEventListener('click', () => requestBulkPriority(parseInt(el.dataset.bulkPriority, 10))));
 
     const alarmComplete = document.getElementById('alarm-complete');
     if (alarmComplete) alarmComplete.addEventListener('click', completeCurrent);
