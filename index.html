@@ -1694,8 +1694,8 @@
     return `
       <div class="alarm-overlay">
         <div class="alarm-card">
-          <div class="alarm-glyph">&#9200;</div>
-          <p class="alarm-title">${escapeHtml(r.title)}</p>
+          <p class="alarm-title" style="font-size:22px; font-weight:700; color:${PRIORITY_META[priority]}; margin-bottom:10px;">Priority ${priority}</p>
+          <p class="alarm-title" style="margin-top:-6px;">${escapeHtml(r.title)}</p>
           <p class="alarm-time">Was due ${fmtTime(r.when)}</p>
           <div class="alarm-actions">
             <button class="alarm-done-btn" id="alarm-complete" data-alarm-id="${displayId}">Mark checked</button>
