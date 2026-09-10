@@ -390,6 +390,11 @@
   let driveFileId = null;
   let driveStatus = 'idle'; // idle | connecting | syncing | synced | error | not-configured
   let driveError = '';
+  let lastSyncedAt = parseInt(localStorage.getItem('reminders_last_synced_at') || '0', 10) || null;
+  function markSynced() {
+    lastSyncedAt = Date.now();
+    try { localStorage.setItem('reminders_last_synced_at', String(lastSyncedAt)); } catch (e) {}
+  }
 
   const root = document.getElementById('app-root');
 
@@ -484,7 +489,23 @@
 
   /* Central save: writes locally immediately, then pushes to Drive if connected */
   let pushTimer = null;
+  // Drop anything from the waiting popup queue that no longer genuinely
+  // qualifies as due — e.g. its time got pushed later, it was marked done,
+  // or it was deleted. Runs on every save so it can't go stale no matter
+  // which screen made the change.
+  function pruneAlarmQueue() {
+    const now = Date.now();
+    alarmQueue = alarmQueue.filter(id => {
+      const r = reminders.find(r => r.id === id);
+      if (!r || r.done || !r.when) return false;
+      const due = new Date(r.when).getTime();
+      if (isNaN(due) || due > now) return false;
+      if (r.suppressedUntil === r.when) return false;
+      return true;
+    });
+  }
   function save() {
+    pruneAlarmQueue();
     saveLocal();
     if (accessToken) {
       clearTimeout(pushTimer);
@@ -599,10 +620,12 @@
         const text = await readDriveFile(file.id);
         const remote = JSON.parse(text || '[]');
         reminders = mergeReminders(reminders, remote);
+        pruneAlarmQueue();
         saveLocal();
       } else {
         driveFileId = await createDriveFile(JSON.stringify(reminders));
       }
+      markSynced();
       setDriveStatus('synced');
       render();
     } catch (e) {
@@ -619,6 +642,7 @@
         driveFileId = file ? file.id : await createDriveFile(JSON.stringify(reminders));
       }
       await updateDriveFile(driveFileId, JSON.stringify(reminders));
+      markSynced();
       setDriveStatus('synced');
     } catch (e) {
       setDriveStatus('error', e.message || String(e));
@@ -649,9 +673,11 @@
       const merged = mergeReminders(reminders, remote);
       if (JSON.stringify(merged) !== JSON.stringify(reminders)) {
         reminders = merged;
+        pruneAlarmQueue();
         saveLocal();
         render();
       }
+      markSynced();
       setDriveStatus('synced');
     } catch (e) {
       setDriveStatus('error', e.message || String(e));
@@ -883,19 +909,17 @@
     pendingDeleteIds = new Set();
     render();
   }
-  function deleteFromAlarm() {
-    const id = alarmQueue[0];
+  function deleteFromAlarm(id) {
     if (!id) return;
     pendingDeleteIds = new Set([id]);
     showDeleteConfirm = true;
     render();
   }
-  function editFromAlarm() {
-    const id = alarmQueue[0];
+  function editFromAlarm(id) {
     if (!id) return;
     const r = reminders.find(r => r.id === id);
     if (r) { r.suppressedUntil = r.when; r.updated = Date.now(); save(); }
-    alarmQueue.shift();
+    alarmQueue = alarmQueue.filter(qid => qid !== id);
     editingId = id;
     liveEditTitle = null;
     liveEditTime = null;
@@ -1041,29 +1065,25 @@
     render();
   }
 
-  function snoozeCurrent(minutes) {
-    const id = alarmQueue[0];
+  function snoozeCurrent(id, minutes) {
     const r = reminders.find(r => r.id === id);
     if (r) { r.when = new Date(Date.now() + minutes * 60000).toISOString(); r.suppressedUntil = null; r.updated = Date.now(); save(); }
-    alarmQueue.shift(); render();
+    alarmQueue = alarmQueue.filter(qid => qid !== id); render();
   }
-  function snoozeCurrentAbsolute(hour) {
-    const id = alarmQueue[0];
+  function snoozeCurrentAbsolute(id, hour) {
     const r = reminders.find(r => r.id === id);
     if (r) { r.when = nextOccurrenceISO(hour); r.suppressedUntil = null; r.updated = Date.now(); save(); }
-    alarmQueue.shift(); render();
+    alarmQueue = alarmQueue.filter(qid => qid !== id); render();
   }
-  function dismissCurrent() {
-    const id = alarmQueue[0];
-    const r = reminders.find(r => r.id === id);
-    if (r) { r.suppressedUntil = r.when; r.updated = Date.now(); save(); }
-    alarmQueue.shift(); render();
+  function dismissCurrent(id) {
+    // Dismiss no longer silences a reminder forever — it comes back in 1
+    // minute and re-queues by priority, same as tapping the 1m snooze.
+    snoozeCurrent(id, 1);
   }
-  function completeCurrent() {
-    const id = alarmQueue[0];
+  function completeCurrent(id) {
     const r = reminders.find(r => r.id === id);
     if (r) { r.done = true; r.completedAt = Date.now(); r.updated = Date.now(); save(); }
-    alarmQueue.shift(); render();
+    alarmQueue = alarmQueue.filter(qid => qid !== id); render();
   }
   function togglePauseAlerts() {
     alertsPaused = !alertsPaused;
@@ -1186,6 +1206,14 @@
     }
   }
 
+  function fmtSyncedTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    return sameDay ? timeStr : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ', ' + timeStr;
+  }
   function renderSyncStatus() {
     let label, cls;
     if (!clientId) { label = 'Drive sync not set up — tap "Sync"'; cls = ''; }
@@ -1194,7 +1222,8 @@
     else if (driveStatus === 'synced') { label = 'Synced with Google Drive'; cls = 'on'; }
     else if (driveStatus === 'error') { label = 'Drive sync error: ' + escapeHtml(driveError); cls = 'err'; }
     else { label = 'Drive connected'; cls = 'on'; }
-    return `<div class="sync-status"><span class="sync-dot ${cls}"></span>${label}</div>`;
+    const lastSyncedLine = lastSyncedAt ? `<div class="sync-status" style="margin-top:-2px;"><span class="sync-dot"></span>Last synced: ${fmtSyncedTime(lastSyncedAt)}</div>` : '';
+    return `<div class="sync-status"><span class="sync-dot ${cls}"></span>${label}</div>${lastSyncedLine}`;
   }
 
   function renderSettings() {
@@ -1256,6 +1285,7 @@
             <input type="datetime-local" class="edit-time-input" id="edit-time-${r.id}" value="${timeVal}" />
             <p class="snooze-label" style="margin:0 0 6px;">Push time forward by</p>
             <div class="snooze-grid">
+              <button class="snooze-btn" data-edit-bump="${r.id}" data-minutes="1">1m</button>
               <button class="snooze-btn" data-edit-bump="${r.id}" data-minutes="5">5m</button>
               <button class="snooze-btn" data-edit-bump="${r.id}" data-minutes="10">10m</button>
               <button class="snooze-btn" data-edit-bump="${r.id}" data-minutes="15">15m</button>
@@ -1328,6 +1358,7 @@
         </div>
         <p class="snooze-label" style="margin:10px 0 0;">Snooze all for</p>
         <div class="snooze-grid">
+          <button class="snooze-btn" data-bulk-snooze="1">1m</button>
           <button class="snooze-btn" data-bulk-snooze="5">5m</button>
           <button class="snooze-btn" data-bulk-snooze="10">10m</button>
           <button class="snooze-btn" data-bulk-snooze="15">15m</button>
@@ -1415,6 +1446,7 @@
           <input type="datetime-local" class="edit-time-input" id="add-popup-time" value="${timeValue}" />
           <p class="snooze-label" style="margin-top:10px;">Push time forward by</p>
           <div class="snooze-grid">
+            <button class="snooze-btn" data-bump="1">1m</button>
             <button class="snooze-btn" data-bump="5">5m</button>
             <button class="snooze-btn" data-bump="10">10m</button>
             <button class="snooze-btn" data-bump="15">15m</button>
@@ -1440,7 +1472,8 @@
   }
 
   function renderAlarm() {
-    const r = reminders.find(r => r.id === alarmQueue[0]);
+    const displayId = alarmQueue[0];
+    const r = reminders.find(r => r.id === displayId);
     if (!r) return '';
     const priority = r.priority || 3;
     return `
@@ -1450,12 +1483,12 @@
           <p class="alarm-title">${escapeHtml(r.title)}</p>
           <p class="alarm-time">Was due ${fmtTime(r.when)}</p>
           <div class="alarm-actions">
-            <button class="alarm-done-btn" id="alarm-complete">Mark done</button>
-            <button class="alarm-dismiss-btn" id="alarm-dismiss">Dismiss</button>
+            <button class="alarm-done-btn" id="alarm-complete" data-alarm-id="${displayId}">Mark done</button>
+            <button class="alarm-dismiss-btn" id="alarm-dismiss" data-alarm-id="${displayId}">Dismiss</button>
           </div>
           <div class="alarm-actions" style="margin-bottom:14px;">
-            <button class="alarm-dismiss-btn" id="alarm-edit" style="flex:1;">Edit</button>
-            <button class="alarm-dismiss-btn" id="alarm-delete" style="flex:1;">Delete</button>
+            <button class="alarm-dismiss-btn" id="alarm-edit" data-alarm-id="${displayId}" style="flex:1;">Edit</button>
+            <button class="alarm-dismiss-btn" id="alarm-delete" data-alarm-id="${displayId}" style="flex:1;">Delete</button>
           </div>
           <p class="snooze-label">Priority</p>
           <div class="priority-row" style="justify-content:center; margin-top:0 0 16px;">
@@ -1463,16 +1496,17 @@
           </div>
           <p class="snooze-label">Snooze for</p>
           <div class="snooze-grid">
-            <button class="snooze-btn" data-snooze="5">5m</button>
-            <button class="snooze-btn" data-snooze="10">10m</button>
-            <button class="snooze-btn" data-snooze="15">15m</button>
-            <button class="snooze-btn" data-snooze="30">30m</button>
-            <button class="snooze-btn" data-snooze="60">1h</button>
-            <button class="snooze-btn" data-snooze="120">2h</button>
-            <button class="snooze-btn" data-snooze="300">5h</button>
-            <button class="snooze-btn" data-snooze-abs="5">5 AM</button>
-            <button class="snooze-btn" data-snooze-abs="13">1 PM</button>
-            <button class="snooze-btn" data-snooze-abs="17">5 PM</button>
+            <button class="snooze-btn" data-snooze="1" data-alarm-id="${displayId}">1m</button>
+            <button class="snooze-btn" data-snooze="5" data-alarm-id="${displayId}">5m</button>
+            <button class="snooze-btn" data-snooze="10" data-alarm-id="${displayId}">10m</button>
+            <button class="snooze-btn" data-snooze="15" data-alarm-id="${displayId}">15m</button>
+            <button class="snooze-btn" data-snooze="30" data-alarm-id="${displayId}">30m</button>
+            <button class="snooze-btn" data-snooze="60" data-alarm-id="${displayId}">1h</button>
+            <button class="snooze-btn" data-snooze="120" data-alarm-id="${displayId}">2h</button>
+            <button class="snooze-btn" data-snooze="300" data-alarm-id="${displayId}">5h</button>
+            <button class="snooze-btn" data-snooze-abs="5" data-alarm-id="${displayId}">5 AM</button>
+            <button class="snooze-btn" data-snooze-abs="13" data-alarm-id="${displayId}">1 PM</button>
+            <button class="snooze-btn" data-snooze-abs="17" data-alarm-id="${displayId}">5 PM</button>
           </div>
           ${alarmQueue.length > 1 ? `<p class="queue-note">${alarmQueue.length - 1} more waiting</p>` : ''}
           <button class="alarm-dismiss-btn" id="pause-alerts-btn" style="margin-top:14px; width:100%;">Pause all alert popups</button>
@@ -1561,15 +1595,15 @@
     document.querySelectorAll('[data-bulk-priority]').forEach(el => el.addEventListener('click', () => requestBulkPriority(parseInt(el.dataset.bulkPriority, 10))));
 
     const alarmComplete = document.getElementById('alarm-complete');
-    if (alarmComplete) alarmComplete.addEventListener('click', completeCurrent);
+    if (alarmComplete) alarmComplete.addEventListener('click', () => completeCurrent(alarmComplete.dataset.alarmId));
     const alarmDismiss = document.getElementById('alarm-dismiss');
-    if (alarmDismiss) alarmDismiss.addEventListener('click', dismissCurrent);
+    if (alarmDismiss) alarmDismiss.addEventListener('click', () => dismissCurrent(alarmDismiss.dataset.alarmId));
     const alarmDelete = document.getElementById('alarm-delete');
-    if (alarmDelete) alarmDelete.addEventListener('click', deleteFromAlarm);
+    if (alarmDelete) alarmDelete.addEventListener('click', () => deleteFromAlarm(alarmDelete.dataset.alarmId));
     const alarmEdit = document.getElementById('alarm-edit');
-    if (alarmEdit) alarmEdit.addEventListener('click', editFromAlarm);
-    document.querySelectorAll('[data-snooze]').forEach(el => el.addEventListener('click', () => snoozeCurrent(parseInt(el.dataset.snooze, 10))));
-    document.querySelectorAll('[data-snooze-abs]').forEach(el => el.addEventListener('click', () => snoozeCurrentAbsolute(parseInt(el.dataset.snoozeAbs, 10))));
+    if (alarmEdit) alarmEdit.addEventListener('click', () => editFromAlarm(alarmEdit.dataset.alarmId));
+    document.querySelectorAll('[data-snooze]').forEach(el => el.addEventListener('click', () => snoozeCurrent(el.dataset.alarmId, parseInt(el.dataset.snooze, 10))));
+    document.querySelectorAll('[data-snooze-abs]').forEach(el => el.addEventListener('click', () => snoozeCurrentAbsolute(el.dataset.alarmId, parseInt(el.dataset.snoozeAbs, 10))));
 
     const saveClientIdBtn = document.getElementById('save-client-id');
     if (saveClientIdBtn) saveClientIdBtn.addEventListener('click', () => {
