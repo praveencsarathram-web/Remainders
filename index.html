@@ -362,6 +362,9 @@
   let selectMode = false;
   let selectedIds = new Set();
   let alarmQueue = [];
+  let lockedAlarmId = null; // once a popup is shown, it stays locked to this
+                             // exact reminder until acted on — new arrivals
+                             // can't swap it out from under a mid-tap.
   let alertsPaused = false;
   let audioCtx = null;
   let showSettings = false;
@@ -895,6 +898,7 @@
   function confirmDelete() {
     reminders = reminders.filter(r => !pendingDeleteIds.has(r.id));
     alarmQueue = alarmQueue.filter(id => !pendingDeleteIds.has(id));
+    if (lockedAlarmId && pendingDeleteIds.has(lockedAlarmId)) lockedAlarmId = null;
     if (editingId && pendingDeleteIds.has(editingId)) { editingId = null; editAnchorTime = null; liveEditTitle = null; liveEditTime = null; }
     save();
     showDeleteConfirm = false;
@@ -919,7 +923,7 @@
     if (!id) return;
     const r = reminders.find(r => r.id === id);
     if (r) { r.suppressedUntil = r.when; r.updated = Date.now(); save(); }
-    alarmQueue = alarmQueue.filter(qid => qid !== id);
+    alarmQueue = alarmQueue.filter(qid => qid !== id); if (lockedAlarmId === id) lockedAlarmId = null;
     editingId = id;
     liveEditTitle = null;
     liveEditTime = null;
@@ -1068,12 +1072,12 @@
   function snoozeCurrent(id, minutes) {
     const r = reminders.find(r => r.id === id);
     if (r) { r.when = new Date(Date.now() + minutes * 60000).toISOString(); r.suppressedUntil = null; r.updated = Date.now(); save(); }
-    alarmQueue = alarmQueue.filter(qid => qid !== id); render();
+    alarmQueue = alarmQueue.filter(qid => qid !== id); if (lockedAlarmId === id) lockedAlarmId = null; render();
   }
   function snoozeCurrentAbsolute(id, hour) {
     const r = reminders.find(r => r.id === id);
     if (r) { r.when = nextOccurrenceISO(hour); r.suppressedUntil = null; r.updated = Date.now(); save(); }
-    alarmQueue = alarmQueue.filter(qid => qid !== id); render();
+    alarmQueue = alarmQueue.filter(qid => qid !== id); if (lockedAlarmId === id) lockedAlarmId = null; render();
   }
   function dismissCurrent(id) {
     // Dismiss no longer silences a reminder forever — it comes back in 1
@@ -1083,7 +1087,7 @@
   function completeCurrent(id) {
     const r = reminders.find(r => r.id === id);
     if (r) { r.done = true; r.completedAt = Date.now(); r.updated = Date.now(); save(); }
-    alarmQueue = alarmQueue.filter(qid => qid !== id); render();
+    alarmQueue = alarmQueue.filter(qid => qid !== id); if (lockedAlarmId === id) lockedAlarmId = null; render();
   }
   function togglePauseAlerts() {
     alertsPaused = !alertsPaused;
@@ -1472,9 +1476,11 @@
   }
 
   function renderAlarm() {
-    const displayId = alarmQueue[0];
+    if (lockedAlarmId && !alarmQueue.includes(lockedAlarmId)) lockedAlarmId = null;
+    if (!lockedAlarmId) lockedAlarmId = alarmQueue[0];
+    const displayId = lockedAlarmId;
     const r = reminders.find(r => r.id === displayId);
-    if (!r) return '';
+    if (!r) { lockedAlarmId = null; return ''; }
     const priority = r.priority || 3;
     return `
       <div class="alarm-overlay">
