@@ -1761,10 +1761,6 @@
           <p class="alarm-title" style="font-size:22px; font-weight:700; color:${PRIORITY_META[priority]}; margin-bottom:10px;">Priority ${priority}</p>
           <p class="alarm-title" style="margin-top:-6px;">${escapeHtml(r.title)}</p>
           <p class="alarm-time">Was due ${fmtTime(r.when)}</p>
-          <div class="alarm-actions">
-            <button class="alarm-done-btn" id="alarm-complete" data-alarm-id="${displayId}">Mark checked</button>
-            <button class="alarm-dismiss-btn" id="alarm-dismiss" data-alarm-id="${displayId}">Dismiss</button>
-          </div>
           <div class="alarm-actions" style="margin-bottom:14px;">
             <button class="alarm-dismiss-btn" id="alarm-edit" data-alarm-id="${displayId}" style="flex:1;">Edit</button>
             <button class="alarm-dismiss-btn" id="alarm-delete" data-alarm-id="${displayId}" style="flex:1;">Delete</button>
