@@ -1655,6 +1655,17 @@
   setInterval(checkDue, 10000);
   checkDue();
   setInterval(pullFromDrive, 30000);
+
+  // Mobile browsers throttle/pause timers while the tab is backgrounded
+  // (screen off, app switched away). The moment it becomes visible again,
+  // immediately catch up instead of waiting for the next scheduled tick —
+  // this both re-checks what's due and pulls any changes made elsewhere
+  // while this device was asleep.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      pullFromDrive().then(checkDue).catch(checkDue);
+    }
+  });
 })();
 </script>
 </body>
