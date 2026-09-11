@@ -113,6 +113,12 @@
   .alerts-toggle { color: var(--ink); background: var(--line); }
   .alerts-toggle.paused { color: white; background: var(--ember); }
 
+  .search-toggle-btn {
+    width: 32px; height: 32px; border-radius: 50%; border: none; background: var(--line); color: var(--ink);
+    display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 15px; padding: 0; flex-shrink: 0;
+  }
+  .search-toggle-btn.active { background: var(--ember); color: white; }
+
   .subtitle { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 13px; color: var(--muted); margin: 0 0 16px; }
 
   .sync-status {
@@ -442,6 +448,7 @@
   let alertsPaused = false;
   let audioCtx = null;
   let showSettings = false;
+  let showSearchBar = false;
   let searchQuery = '';
   let priorityFilter = null;
   let dateFilterMode = 'all'; // 'all' | 'today'
@@ -1416,6 +1423,7 @@
           <span class="count">${totalActiveCount} active</span>
           <button class="pill-btn settings-toggle" id="settings-toggle">${showSettings ? 'Close' : 'Sync'}</button>
           <button class="pill-btn alerts-toggle ${alertsPaused ? 'paused' : ''}" id="alerts-toggle" title="${alertsPaused ? 'Alerts paused — tap to resume' : 'Alerts on — tap to pause'}">${alertsPaused ? '\ud83d\udd15 Paused' : '\ud83d\udd14 Alerts'}</button>
+          ${reminders.length ? `<button class="search-toggle-btn ${showSearchBar ? 'active' : ''}" id="search-toggle-btn" title="${showSearchBar ? 'Hide search' : 'Search'}">\ud83d\udd0d</button>` : ''}
           ${reminders.length ? `<button class="pill-btn select-toggle" id="select-toggle">${selectMode ? 'Cancel' : 'Select'}</button>` : ''}
           ${selectMode ? `<button class="pill-btn select-toggle" id="select-all-btn">Select all</button>` : ''}
           ${selectMode ? `<button class="pill-btn select-toggle" id="deselect-all-btn">Deselect all</button>` : ''}
@@ -1423,15 +1431,20 @@
       </div>
       <p class="subtitle">A quiet place to keep track of what's next.</p>
       <p class="desktop-greeting">${getGreeting()}</p>
+
+      ${!selectMode ? `
+      <button class="add-trigger-btn" id="add-trigger-btn">+ Add reminder</button>` : ''}
+
       ${renderDashboardStats()}
       ${renderSyncStatus()}
       ${showSettings ? renderSettings() : ''}
 
       ${reminders.length ? `
+      ${showSearchBar ? `
       <div class="search-bar">
-        <input type="text" id="search-input" placeholder="Search reminders..." value="${escapeHtml(searchQuery)}" />
+        <input type="text" id="search-input" placeholder="Search reminders..." value="${escapeHtml(searchQuery)}" autofocus />
         ${searchQuery ? `<button class="search-clear" id="search-clear">Clear</button>` : ''}
-      </div>
+      </div>` : ''}
       <div class="priority-filter">
         <span class="priority-filter-label">Search with priority</span>
         ${[1,2,3,4,5].map(p => priorityFilterChipHtml(p, priorityFilter === p)).join('')}
@@ -1446,9 +1459,6 @@
         <button class="sort-chip ${dateFilterMode === 'all' ? 'active' : ''}" data-date-filter="all">All</button>
         <button class="sort-chip ${dateFilterMode === 'today' ? 'active' : ''}" data-date-filter="today">Today only</button>
       </div>` : ''}
-
-      ${!selectMode ? `
-      <button class="add-trigger-btn" id="add-trigger-btn">+ Add reminder</button>` : ''}
 
       ${!loaded ? '<div class="empty-state">Loading...</div>' : renderLists(active, done)}
 
@@ -1830,7 +1840,7 @@
             ${[1,2,3,4,5].map(p => priorityDotHtml(p, addPriority === p, `data-add-priority="${p}"`)).join('')}
           </div>
           <div class="alarm-actions" style="margin-top:18px;">
-            <button class="alarm-done-btn" id="add-submit-btn">Add reminder</button>
+            <button class="alarm-done-btn" id="add-submit-btn" style="background:var(--ember);">Add reminder</button>
             <button class="alarm-dismiss-btn" id="add-cancel-btn">Cancel</button>
           </div>
         </div>
@@ -1886,7 +1896,7 @@
               ${[1,2,3,4,5].map(p => priorityDotHtml(p, alarmEditPriority === p, `data-alarm-edit-priority="${p}"`)).join('')}
             </div>
             <div class="alarm-actions" style="margin-top:18px;">
-              <button class="alarm-done-btn" id="alarm-edit-save">Save</button>
+              <button class="alarm-done-btn" id="alarm-edit-save" style="background:var(--ember);">Save</button>
               <button class="alarm-dismiss-btn" id="alarm-edit-cancel">Cancel</button>
             </div>
           </div>
@@ -1944,6 +1954,9 @@
 
     const alertsToggle = document.getElementById('alerts-toggle');
     if (alertsToggle) alertsToggle.addEventListener('click', togglePauseAlerts);
+
+    const searchToggleBtn = document.getElementById('search-toggle-btn');
+    if (searchToggleBtn) searchToggleBtn.addEventListener('click', () => { showSearchBar = !showSearchBar; render(); });
     const pauseAlertsBtn = document.getElementById('pause-alerts-btn');
     if (pauseAlertsBtn) pauseAlertsBtn.addEventListener('click', togglePauseAlerts);
 
