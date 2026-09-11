@@ -460,7 +460,7 @@
   let pendingBulkPriority = null; // priority number
   let bulkBarExpanded = false;
   let desktopNav = 'dashboard'; // dashboard | today | upcoming | checked | settings — only drives the wide-screen sidebar highlight
-  let dueStateFilter = null; // null | 'due' | 'upcoming' | 'checked' — the clickable stat cards
+  let dueStateFilter = null; // null | 'due' | 'upcoming' | 'unchecked' | 'checked' — the clickable stat cards
   function toggleDueStateFilter(state) {
     dueStateFilter = (dueStateFilter === state) ? null : state;
     render();
@@ -1445,6 +1445,9 @@
     } else if (dueStateFilter === 'upcoming') {
       active = sortList(reminders.filter(r => !r.done && matchesFilters(r) && !isDue(r)));
       done = [];
+    } else if (dueStateFilter === 'unchecked') {
+      active = sortList(reminders.filter(r => !r.done && matchesFilters(r)));
+      done = [];
     } else {
       active = sortList(reminders.filter(r => !r.done && matchesFilters(r)));
       done = sortList(reminders.filter(r => r.done && matchesFilters(r)));
@@ -1576,12 +1579,12 @@
 
   function renderDashboardStats() {
     const dueTodayCount = reminders.filter(r => !r.done && isDue(r)).length;
-    const upcomingCount = reminders.filter(r => !r.done && !isDue(r)).length;
+    const uncheckedCount = reminders.filter(r => !r.done).length;
     const checkedCount = reminders.filter(r => r.done).length;
     return `
       <div class="dashboard-stats">
         <button class="stat-card stat-due ${dueStateFilter === 'due' ? 'stat-active' : ''}" data-stat-filter="due"><span class="stat-label">DUE NOW</span><span class="stat-value">${dueTodayCount}</span></button>
-        <button class="stat-card stat-upcoming ${dueStateFilter === 'upcoming' ? 'stat-active' : ''}" data-stat-filter="upcoming"><span class="stat-label">UNCHECKED</span><span class="stat-value">${upcomingCount}</span></button>
+        <button class="stat-card stat-upcoming ${dueStateFilter === 'unchecked' ? 'stat-active' : ''}" data-stat-filter="unchecked"><span class="stat-label">UNCHECKED</span><span class="stat-value">${uncheckedCount}</span></button>
         <button class="stat-card stat-checked ${dueStateFilter === 'checked' ? 'stat-active' : ''}" data-stat-filter="checked"><span class="stat-label">CHECKED</span><span class="stat-value">${checkedCount}</span></button>
       </div>
     `;
@@ -1829,7 +1832,7 @@
         <div class="alarm-card">
           <p class="alarm-title" style="font-size:32px; font-weight:700; margin:10px 0 22px;">Move to ${pendingPriorityChange.priority}</p>
           <div class="alarm-actions">
-            <button class="alarm-done-btn" id="confirm-priority-btn">Confirm</button>
+            <button class="alarm-done-btn" id="confirm-priority-btn" style="background:var(--ember);">Confirm</button>
             <button class="alarm-dismiss-btn" id="cancel-priority-btn">Cancel</button>
           </div>
         </div>
@@ -1843,7 +1846,7 @@
           <p class="alarm-title" style="font-size:32px; font-weight:700; margin:10px 0 4px;">Move to ${pendingBulkPriority}</p>
           <p class="alarm-time">${selectedIds.size} reminder${selectedIds.size === 1 ? '' : 's'}</p>
           <div class="alarm-actions">
-            <button class="alarm-done-btn" id="confirm-bulk-priority-btn">Confirm</button>
+            <button class="alarm-done-btn" id="confirm-bulk-priority-btn" style="background:var(--ember);">Confirm</button>
             <button class="alarm-dismiss-btn" id="cancel-bulk-priority-btn">Cancel</button>
           </div>
         </div>
