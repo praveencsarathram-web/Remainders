@@ -220,6 +220,35 @@
     font-size: 11.5px; color: var(--ink); cursor: pointer; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
   }
   .quick-snooze-btn:active { background: var(--ember); color: white; border-color: var(--ember); }
+  .cw-btn { border-color: var(--ember); color: var(--ember); font-weight: 700; }
+  .cw-tag {
+    display: inline-flex; align-items: center; justify-content: center; background: var(--ember); color: #ffffff;
+    font-size: 11px; font-weight: 700; border-radius: 6px; padding: 3px 8px; margin-left: 6px;
+    font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; letter-spacing: 0.3px;
+  }
+
+  .cw-board {
+    background: var(--ember-soft); border: 1px solid var(--ember); border-radius: 14px;
+    padding: 14px 16px; margin-bottom: 22px;
+  }
+  .cw-board-title {
+    font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 12px; font-weight: 700;
+    color: var(--ember); text-transform: uppercase; letter-spacing: 0.4px; margin: 0 0 10px;
+  }
+  .cw-chip {
+    display: inline-flex; align-items: center; gap: 6px; background: var(--paper); border: 1px solid var(--ember);
+    border-radius: 20px; padding: 6px 10px 6px 12px; font-size: 13px; color: var(--ink); cursor: pointer;
+    margin: 0 6px 6px 0; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
+  }
+  .cw-chip .cw-remove-x { color: var(--ember); font-weight: 700; font-size: 15px; line-height: 1; }
+
+  .cw-board-compact { padding: 10px 10px; margin: 10px 0 0; }
+  .cw-board-compact .cw-board-title { font-size: 10.5px; margin: 0 0 8px; }
+  .cw-board-compact .cw-chip { display: flex; width: 100%; box-sizing: border-box; font-size: 12px; padding: 6px 8px 6px 10px; margin: 0 0 6px; }
+
+  @media (min-width: 900px) {
+    .cw-board-top { display: none; }
+  }
 
   .priority-label { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 13px; color: var(--muted); margin-right: 4px; }
   .priority-dot { width: 40px; height: 40px; border-radius: 50%; border: 2px solid currentColor; cursor: pointer; padding: 0; position: relative; transition: box-shadow 0.12s ease; }
@@ -478,6 +507,7 @@
   let liveBulkTime = null;
   let showAddPopup = false;
   let addPriority = 1;
+  let addCW = false;
   let addAnchorTime = null;
   let editAnchorTime = null;
   let alarmEditing = false;
@@ -629,6 +659,20 @@
       return true;
     });
   }
+  function toggleCW(id, on) {
+    const r = reminders.find(x => x.id === id);
+    if (!r) return;
+    if (on) {
+      if (reminders.filter(x => x.cw).length >= 1) return;
+      r.cw = true;
+    } else {
+      r.cw = false;
+    }
+    r.updated = Date.now();
+    save();
+    render();
+  }
+
   function save() {
     pruneAlarmQueue();
     saveLocal();
@@ -860,7 +904,7 @@
   /* =========================================================
      REMINDER LOGIC
      ========================================================= */
-  function addReminder(title, when, priority) {
+  function addReminder(title, when, priority, cw) {
     reminders.unshift({
       id: 'r' + Date.now() + Math.random().toString(36).slice(2, 7),
       title: title.trim(),
@@ -869,6 +913,7 @@
       done: false,
       completedAt: null,
       suppressedUntil: null,
+      cw: !!cw,
       created: Date.now(),
       updated: Date.now()
     });
@@ -878,6 +923,7 @@
   function openAddPopup() {
     showAddPopup = true;
     addPriority = 1;
+    addCW = false;
     addAnchorTime = new Date().toISOString();
     render();
   }
@@ -887,6 +933,11 @@
   }
   function setAddPriority(p) {
     addPriority = p;
+    render();
+  }
+  function toggleAddCW() {
+    if (!addCW && reminders.filter(x => x.cw).length >= 1) return;
+    addCW = !addCW;
     render();
   }
   function markSnoozeSelected(btn) {
@@ -918,8 +969,9 @@
     if (!title) { titleEl.focus(); return; }
     const when = timeEl.value ? new Date(timeEl.value).toISOString() : null;
     const priority = addPriority;
+    const cw = addCW;
     showAddPopup = false;
-    addReminder(title, when, priority);
+    addReminder(title, when, priority, cw);
   }
   function quickSnooze(id, minutes) {
     const r = reminders.find(r => r.id === id);
@@ -1319,6 +1371,13 @@
     if (r) { r.when = nextOccurrenceISO(hour); r.suppressedUntil = null; r.updated = Date.now(); save(); }
     alarmQueue = alarmQueue.filter(qid => qid !== id); if (lockedAlarmId === id) lockedAlarmId = null; render();
   }
+  function markCWFromAlarm(id) {
+    const r = reminders.find(r => r.id === id);
+    if (r && !r.cw) {
+      if (reminders.filter(x => x.cw).length < 1) { r.cw = true; r.updated = Date.now(); save(); }
+    }
+    alarmQueue = alarmQueue.filter(qid => qid !== id); if (lockedAlarmId === id) lockedAlarmId = null; render();
+  }
   function dismissCurrent(id) {
     // Dismiss no longer silences a reminder forever — it comes back in 1
     // minute and re-queues by priority, same as tapping the 1m snooze.
@@ -1435,6 +1494,8 @@
       ${!selectMode ? `
       <button class="add-trigger-btn" id="add-trigger-btn">+ Add reminder</button>` : ''}
 
+      <div class="cw-board-top">${renderCWBoard()}</div>
+
       ${renderDashboardStats()}
       ${renderSyncStatus()}
       ${showSettings ? renderSettings() : ''}
@@ -1530,6 +1591,7 @@
     return `
       <div class="sidebar-logo"><img src="data:image/png;base64,${LOGO_B64}" alt="TLS Solutions" /></div>
       ${navItems.map(item => `<button class="sidebar-nav-btn ${desktopNav === item.key ? 'active' : ''}" data-desktop-nav="${item.key}">${item.label}</button>`).join('')}
+      ${renderCWBoard(true)}
       <div style="margin-top:auto; padding:14px 6px 0; font-family:'IBM Plex Sans',sans-serif; font-size:11px; color:var(--muted);">
         Due today: ${dueTodayCount} · Upcoming: ${upcomingCount} · Checked: ${checkedCount}
       </div>
@@ -1545,6 +1607,17 @@
         <button class="stat-card stat-due ${dueStateFilter === 'due' ? 'stat-active' : ''}" data-stat-filter="due"><span class="stat-label">DUE NOW</span><span class="stat-value">${dueTodayCount}</span></button>
         <button class="stat-card stat-upcoming ${dueStateFilter === 'upcoming' ? 'stat-active' : ''}" data-stat-filter="upcoming"><span class="stat-label">UPCOMING</span><span class="stat-value">${upcomingCount}</span></button>
         <button class="stat-card stat-checked ${dueStateFilter === 'checked' ? 'stat-active' : ''}" data-stat-filter="checked"><span class="stat-label">CHECKED</span><span class="stat-value">${checkedCount}</span></button>
+      </div>
+    `;
+  }
+
+  function renderCWBoard(compact) {
+    const cwItems = reminders.filter(r => r.cw);
+    if (!cwItems.length) return '';
+    return `
+      <div class="cw-board ${compact ? 'cw-board-compact' : ''}">
+        <p class="cw-board-title">Currently working on — tap to remove</p>
+        ${cwItems.map(r => `<button class="cw-chip" data-cw-remove="${r.id}">${escapeHtml(r.title)}<span class="cw-remove-x">&times;</span></button>`).join('')}
       </div>
     `;
   }
@@ -1649,6 +1722,7 @@
             <p class="alarm-title" style="font-size:17px; font-weight:700; color:${PRIORITY_META[previewPriority]}; margin:0 0 6px;">Priority ${previewPriority}</p>
             <div class="priority-row" style="margin-top:0;">
               ${[1,2,3,4,5].map(p => priorityDotHtml(p, liveEditPriority === p, `data-edit-priority="${r.id}"`)).join('')}
+              ${r.cw ? `<span class="cw-tag">CW</span>` : ''}
             </div>
             <div class="edit-actions" style="margin-top:10px;">
               <button class="edit-save-btn" data-save-edit="${r.id}">Save</button>
@@ -1673,11 +1747,13 @@
           <div class="priority-row">
             <span class="priority-label">Priority</span>
             ${[1,2,3,4,5].map(p => priorityDotHtml(p, priority === p, `data-priority-id="${r.id}"`)).join('')}
+            ${r.cw ? `<span class="cw-tag">CW</span>` : ''}
           </div>
           <div class="quick-snooze-row">
             <span class="priority-label">Snooze</span>
             <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="30">30m</button>
             <button class="quick-snooze-btn" data-quick-snooze-tom="${r.id}">TOM</button>
+            ${(!r.cw && reminders.filter(x => x.cw).length < 1) ? `<button class="quick-snooze-btn cw-btn" data-cw-add="${r.id}">CW</button>` : ''}
           </div>` : ''}
         </div>
         ${!selectMode ? `<button class="edit-btn" data-edit-id="${r.id}">Edit</button>` : ''}
@@ -1834,6 +1910,7 @@
             <button class="snooze-btn" data-bump-abs="5">5 AM</button>
             <button class="snooze-btn" data-bump-abs="13">1 PM</button>
             <button class="snooze-btn" data-bump-abs="17">5 PM</button>
+            ${(addCW || reminders.filter(x => x.cw).length < 1) ? `<button class="snooze-btn cw-btn ${addCW ? 'active' : ''}" id="add-cw-toggle" type="button">CW</button>` : ''}
           </div>
           <p class="snooze-label">Priority</p>
           <div class="priority-row" style="justify-content:center; margin-top:0;">
@@ -1894,6 +1971,7 @@
             <p class="snooze-label">Priority</p>
             <div class="priority-row" style="justify-content:center; margin-top:0;">
               ${[1,2,3,4,5].map(p => priorityDotHtml(p, alarmEditPriority === p, `data-alarm-edit-priority="${p}"`)).join('')}
+              ${r.cw ? `<span class="cw-tag">CW</span>` : ''}
             </div>
             <div class="alarm-actions" style="margin-top:18px;">
               <button class="alarm-done-btn" id="alarm-edit-save" style="background:var(--ember);">Save</button>
@@ -1917,6 +1995,7 @@
           <p class="snooze-label">Priority</p>
           <div class="priority-row" style="justify-content:center; margin-top:0 0 16px;">
             ${[1,2,3,4,5].map(p => priorityDotHtml(p, priority === p, `data-alarm-priority-id="${r.id}"`)).join('')}
+            ${r.cw ? `<span class="cw-tag">CW</span>` : ''}
           </div>
           <p class="snooze-label">Snooze for</p>
           <div class="snooze-grid">
@@ -1931,6 +2010,7 @@
             <button class="snooze-btn" data-snooze-abs="5" data-alarm-id="${displayId}">5 AM</button>
             <button class="snooze-btn" data-snooze-abs="13" data-alarm-id="${displayId}">1 PM</button>
             <button class="snooze-btn" data-snooze-abs="17" data-alarm-id="${displayId}">5 PM</button>
+            ${(!r.cw && reminders.filter(x => x.cw).length < 1) ? `<button class="snooze-btn cw-btn" data-cw-alarm="${displayId}">CW</button>` : ''}
           </div>
           ${alarmQueue.length > 1 ? `<p class="queue-note">${alarmQueue.length - 1} more waiting</p>` : ''}
           <button class="alarm-dismiss-btn" id="pause-alerts-btn" style="margin-top:14px; width:100%;">Pause all alert popups</button>
@@ -1965,6 +2045,8 @@
       if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
       openAddPopup();
     });
+    const addCwToggle = document.getElementById('add-cw-toggle');
+    if (addCwToggle) addCwToggle.addEventListener('click', toggleAddCW);
     const addSubmitBtn = document.getElementById('add-submit-btn');
     if (addSubmitBtn) addSubmitBtn.addEventListener('click', submitAddPopup);
     const addCancelBtn = document.getElementById('add-cancel-btn');
@@ -1980,6 +2062,8 @@
     document.querySelectorAll('[data-priority-id]').forEach(el => el.addEventListener('click', () => requestPriorityChange(el.dataset.priorityId, parseInt(el.dataset.p, 10))));
     document.querySelectorAll('[data-quick-snooze]').forEach(el => el.addEventListener('click', () => quickSnooze(el.dataset.quickSnooze, parseInt(el.dataset.minutes, 10))));
     document.querySelectorAll('[data-quick-snooze-tom]').forEach(el => el.addEventListener('click', () => quickSnoozeTomorrow(el.dataset.quickSnoozeTom)));
+    document.querySelectorAll('[data-cw-add]').forEach(el => el.addEventListener('click', () => toggleCW(el.dataset.cwAdd, true)));
+    document.querySelectorAll('[data-cw-remove]').forEach(el => el.addEventListener('click', () => toggleCW(el.dataset.cwRemove, false)));
     document.querySelectorAll('[data-edit-priority]').forEach(el => el.addEventListener('click', () => setEditPriority(parseInt(el.dataset.p, 10))));
     document.querySelectorAll('[data-alarm-priority-id]').forEach(el => el.addEventListener('click', () => setPriority(el.dataset.alarmPriorityId, parseInt(el.dataset.p, 10))));
     document.querySelectorAll('[data-edit-id]').forEach(el => el.addEventListener('click', () => startEdit(el.dataset.editId)));
@@ -2040,6 +2124,7 @@
     if (alarmEdit) alarmEdit.addEventListener('click', () => editFromAlarm(alarmEdit.dataset.alarmId));
     document.querySelectorAll('[data-snooze]').forEach(el => el.addEventListener('click', () => snoozeCurrent(el.dataset.alarmId, parseInt(el.dataset.snooze, 10))));
     document.querySelectorAll('[data-snooze-abs]').forEach(el => el.addEventListener('click', () => snoozeCurrentAbsolute(el.dataset.alarmId, parseInt(el.dataset.snoozeAbs, 10))));
+    document.querySelectorAll('[data-cw-alarm]').forEach(el => el.addEventListener('click', () => markCWFromAlarm(el.dataset.cwAlarm)));
 
     const alarmEditSave = document.getElementById('alarm-edit-save');
     if (alarmEditSave) alarmEditSave.addEventListener('click', saveAlarmEdit);
