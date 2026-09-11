@@ -1581,7 +1581,7 @@
     return `
       <div class="dashboard-stats">
         <button class="stat-card stat-due ${dueStateFilter === 'due' ? 'stat-active' : ''}" data-stat-filter="due"><span class="stat-label">DUE NOW</span><span class="stat-value">${dueTodayCount}</span></button>
-        <button class="stat-card stat-upcoming ${dueStateFilter === 'upcoming' ? 'stat-active' : ''}" data-stat-filter="upcoming"><span class="stat-label">UPCOMING</span><span class="stat-value">${upcomingCount}</span></button>
+        <button class="stat-card stat-upcoming ${dueStateFilter === 'upcoming' ? 'stat-active' : ''}" data-stat-filter="upcoming"><span class="stat-label">UNCHECKED</span><span class="stat-value">${upcomingCount}</span></button>
         <button class="stat-card stat-checked ${dueStateFilter === 'checked' ? 'stat-active' : ''}" data-stat-filter="checked"><span class="stat-label">CHECKED</span><span class="stat-value">${checkedCount}</span></button>
       </div>
     `;
