@@ -553,7 +553,7 @@
   let accessToken = null;
   let tokenClient = null;
   let driveFileId = null;
-  let driveStatus = 'idle'; // idle | connecting | syncing | synced | error | not-configured
+  let driveStatus = 'idle'; // idle | connecting | syncing | synced | retrying | error | not-configured
   let driveError = '';
   let lastSyncedAt = parseInt(localStorage.getItem('reminders_last_synced_at') || '0', 10) || null;
   function markSynced() {
@@ -684,6 +684,9 @@
 
   /* Central save: writes locally immediately, then pushes to Drive if connected */
   let pushTimer = null;
+  let pushRetryTimer = null;
+  let pushRetryAttempt = 0;
+  const PUSH_RETRY_DELAYS = [5000, 15000, 30000]; // then repeats every 30s after that
   // Drop anything from the waiting popup queue that no longer genuinely
   // qualifies as due — e.g. its time got pushed later, it was marked done,
   // or it was deleted. Runs on every save so it can't go stale no matter
@@ -710,6 +713,8 @@
     saveLocal();
     if (accessToken) {
       clearTimeout(pushTimer);
+      clearTimeout(pushRetryTimer);
+      pushRetryAttempt = 0;
       pushTimer = setTimeout(pushToDrive, 800);
     }
   }
@@ -911,9 +916,18 @@
       await updateDriveFile(driveFileId, payload);
       markSynced();
       setDriveStatus('synced');
+      pushRetryAttempt = 0;
+      clearTimeout(pushRetryTimer);
     } catch (e) {
-      setDriveStatus('error', e.message || String(e));
+      setDriveStatus('retrying', e.message || String(e));
+      scheduleRetryPush();
     }
+  }
+  function scheduleRetryPush() {
+    clearTimeout(pushRetryTimer);
+    const delay = PUSH_RETRY_DELAYS[Math.min(pushRetryAttempt, PUSH_RETRY_DELAYS.length - 1)];
+    pushRetryAttempt++;
+    pushRetryTimer = setTimeout(pushToDrive, delay);
   }
 
   function mergeFolders(local, remote) {
@@ -2023,6 +2037,7 @@
     if (!clientId || !appsScriptUrl || !appsScriptSecret) { label = 'Drive sync not set up — tap "Sync"'; cls = ''; }
     else if (!accessToken) { label = 'Drive not connected — tap "Sync"'; cls = ''; }
     else if (driveStatus === 'syncing' || driveStatus === 'connecting') { label = 'Syncing with Drive…'; cls = 'on'; }
+    else if (driveStatus === 'retrying') { label = 'Waiting to sync — retrying automatically'; cls = ''; }
     else if (driveStatus === 'synced') { label = 'Synced with Google Drive'; cls = 'on'; }
     else if (driveStatus === 'error') { label = 'Drive sync error: ' + escapeHtml(driveError); cls = 'err'; }
     else { label = 'Drive connected'; cls = 'on'; }
@@ -2781,6 +2796,18 @@
   setInterval(checkDue, 10000);
   checkDue();
   setInterval(pullFromDrive, 30000);
+
+  // The moment the browser regains a connection (wifi/data reconnects),
+  // immediately retry any pending push and pull, instead of waiting for
+  // the next scheduled retry or 30-second pull interval.
+  window.addEventListener('online', () => {
+    if (!accessToken) return;
+    pushRetryAttempt = 0;
+    clearTimeout(pushRetryTimer);
+    clearTimeout(pushTimer);
+    pushToDrive();
+    pullFromDrive();
+  });
 
   // Register the offline shell so the page itself can still load with no
   // internet connection, once it's been opened at least once while online.
