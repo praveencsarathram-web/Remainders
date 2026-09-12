@@ -888,13 +888,16 @@
       if (file) {
         driveFileId = file.id;
         const text = await readDriveFile(file.id);
-        const remote = JSON.parse(text || '[]');
-        reminders = mergeReminders(reminders, remote);
+        const parsed = JSON.parse(text || '[]');
+        const remoteReminders = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.reminders) ? parsed.reminders : []);
+        const remoteFolders = Array.isArray(parsed) ? [] : (Array.isArray(parsed.folders) ? parsed.folders : []);
+        reminders = mergeReminders(reminders, remoteReminders);
+        folders = mergeFolders(folders, remoteFolders);
         migrateStaleSuppressedFlags();
         pruneAlarmQueue();
         saveLocal();
       } else {
-        driveFileId = await createDriveFile(JSON.stringify(reminders));
+        driveFileId = await createDriveFile(JSON.stringify({ reminders, folders }));
       }
       markSynced();
       setDriveStatus('synced');
