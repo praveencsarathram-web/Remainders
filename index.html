@@ -63,6 +63,9 @@
     .sidebar-nav-btn:hover { background: var(--done-bg); }
     .sidebar-nav-btn.active { background: var(--ember); color: white; }
     #app-root { max-width: 920px; margin: 0; padding: 32px 36px; flex: 1; }
+    .header { flex-direction: row; align-items: baseline; justify-content: space-between; gap: 0; }
+    .header-right { flex-direction: column; align-items: flex-end; width: auto; }
+    .header-right-row { justify-content: flex-end; }
     #app-root > .brand-logo { display: none; }
     .desktop-greeting { display: block; font-size: 30px; font-weight: 700; color: var(--ink); margin: 2px 0 6px; }
     .dashboard-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 26px; }
@@ -94,10 +97,10 @@
 
   .brand-logo { margin-bottom: 14px; }
   .brand-logo img { height: 34px; width: auto; display: block; }
-  .header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
+  .header { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 4px; }
   .header h1 { font-size: 28px; font-weight: 400; letter-spacing: 0.2px; margin: 0; }
-  .header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
-  .header-right-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .header-right { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; }
+  .header-right-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-start; }
   .header .count { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 13px; color: var(--muted); }
 
   .pill-btn {
