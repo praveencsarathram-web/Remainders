@@ -528,7 +528,7 @@
     const period = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
     return `Good ${period}${userName ? ', ' + userName : ''}`;
   }
-  let sortMode = 'due'; // 'due' | 'priority'
+  let sortMode = 'due'; // 'due' | 'priority' | 'folder'
   let editingId = null;
   let liveEditTitle = null;
   let liveEditTime = null;
@@ -1640,6 +1640,10 @@
       const due = new Date(r.when).getTime();
       if (isNaN(due) || due > now) return;
       if (r.suppressedUntil === r.when) return;
+      // Only Priority 1 and Priority 2 reminders interrupt with a popup.
+      // Priority 3/4/5 stay due — visible in Due Now, stats, and the list —
+      // but never trigger the alarm popup.
+      if (r.priority > 2) return;
       if (!alarmQueue.includes(r.id)) {
         alarmQueue.push(r.id);
         newlyFired = true;
@@ -1732,10 +1736,15 @@
     const copy = [...list];
     if (sortMode === 'priority') {
       copy.sort((a, b) => (a.priority - b.priority) || (timeOrInf(a) - timeOrInf(b)));
+    } else if (sortMode === 'folder') {
+      copy.sort((a, b) => primaryFolder(a).localeCompare(primaryFolder(b)) || (timeOrInf(a) - timeOrInf(b)));
     } else {
       copy.sort((a, b) => (timeOrInf(a) - timeOrInf(b)) || (a.priority - b.priority));
     }
     return copy;
+  }
+  function primaryFolder(r) {
+    return (r.folders && r.folders.length) ? r.folders[0] : 'General';
   }
   function timeOrInf(r) {
     return r.when ? new Date(r.when).getTime() : Infinity;
@@ -1849,6 +1858,7 @@
         <span class="sort-label">Sort by</span>
         <button class="sort-chip ${sortMode === 'due' ? 'active' : ''}" data-sort="due">Due time</button>
         <button class="sort-chip ${sortMode === 'priority' ? 'active' : ''}" data-sort="priority">Priority</button>
+        <button class="sort-chip ${sortMode === 'folder' ? 'active' : ''}" data-sort="folder">Folder</button>
       </div>
       <div class="sort-row">
         <span class="sort-label">Show</span>
