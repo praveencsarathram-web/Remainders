@@ -233,6 +233,7 @@
   .reminder-folders { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 11px; color: var(--muted); margin-top: 3px; }
 
   .priority-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+  .quick-folder-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
   .quick-snooze-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
   .quick-snooze-btn {
     background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 4px 11px;
@@ -534,6 +535,7 @@
   let liveEditTime = null;
   let liveEditPriority = null;
   let liveBulkTime = null;
+  let bulkFolders = [];
   let showAddPopup = false;
   let addPriority = 1;
   let addAnchorTime = null;
@@ -698,13 +700,38 @@
     });
   }
 
-  function save() {
+  let undoStack = [];
+  const UNDO_MAX = 20;
+  function snapshotState() {
+    return { reminders: JSON.parse(JSON.stringify(reminders)), folders: folders.slice() };
+  }
+  function persistOnly() {
     pruneAlarmQueue();
     saveLocal();
     if (accessToken) {
       clearTimeout(pushTimer);
       pushTimer = setTimeout(pushToDrive, 800);
     }
+  }
+  function save() {
+    undoStack.push(snapshotState());
+    if (undoStack.length > UNDO_MAX + 1) undoStack.shift();
+    persistOnly();
+  }
+  function performUndo() {
+    if (undoStack.length <= 1) return;
+    undoStack.pop();
+    const prev = undoStack[undoStack.length - 1];
+    reminders = JSON.parse(JSON.stringify(prev.reminders));
+    folders = prev.folders.slice();
+    alarmQueue = alarmQueue.filter(id => {
+      const r = reminders.find(r => r.id === id);
+      return r && !r.trashed;
+    });
+    if (lockedAlarmId && !reminders.some(r => r.id === lockedAlarmId)) lockedAlarmId = null;
+    if (editingId && !reminders.some(r => r.id === editingId)) { editingId = null; editAnchorTime = null; liveEditTitle = null; liveEditTime = null; liveEditPriority = null; }
+    persistOnly();
+    render();
   }
 
   /* =========================================================
@@ -1203,6 +1230,9 @@
     } else if (context === 'filter') {
       if (folderFilterSelection.includes(name)) folderFilterSelection = folderFilterSelection.filter(f => f !== name);
       else folderFilterSelection = folderFilterSelection.concat([name]);
+    } else if (context === 'bulk') {
+      if (bulkFolders.includes(name)) bulkFolders = bulkFolders.filter(f => f !== name);
+      else bulkFolders = bulkFolders.concat([name]);
     } else {
       const r = reminders.find(r => r.id === id);
       if (!r) return;
@@ -1219,6 +1249,8 @@
       addFolders = value;
     } else if (context === 'filter') {
       folderFilterSelection = value;
+    } else if (context === 'bulk') {
+      bulkFolders = value;
     } else {
       const r = reminders.find(r => r.id === id);
       if (!r) return;
@@ -1292,7 +1324,7 @@
   }
   function toggleSelectMode() {
     selectMode = !selectMode;
-    selectedIds.clear(); liveBulkTime = null; bulkBarExpanded = false;
+    selectedIds.clear(); liveBulkTime = null; bulkFolders = []; bulkBarExpanded = false;
     render();
   }
   function selectAllVisible() {
@@ -1316,21 +1348,26 @@
   function applyBulkSnooze(minutes) {
     const target = new Date(Date.now() + minutes * 60000).toISOString();
     reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); } });
-    save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkBarExpanded = false; render();
+    save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkFolders = []; bulkBarExpanded = false; render();
   }
   function applyBulkSnoozeAbsolute(hour) {
     const target = nextOccurrenceISO(hour);
     reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); } });
-    save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkBarExpanded = false; render();
+    save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkFolders = []; bulkBarExpanded = false; render();
   }
   function applyBulkTime(iso) {
     if (!iso) return;
     reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = new Date(iso).toISOString(); r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); } });
-    save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkBarExpanded = false; render();
+    save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkFolders = []; bulkBarExpanded = false; render();
+  }
+  function applyBulkFolders() {
+    if (selectedIds.size === 0) return;
+    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.folders = bulkFolders.slice(); r.updated = Date.now(); } });
+    save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkFolders = []; openFolderPicker = null; bulkBarExpanded = false; render();
   }
   function applyBulkPriority(p) {
     reminders.forEach(r => { if (selectedIds.has(r.id)) { r.priority = p; r.updated = Date.now(); } });
-    save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkBarExpanded = false; render();
+    save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkFolders = []; bulkBarExpanded = false; render();
   }
   function requestBulkPriority(p) {
     if (selectedIds.size === 0) return;
@@ -1349,7 +1386,7 @@
   }
   function bulkMarkIncomplete() {
     reminders.forEach(r => { if (selectedIds.has(r.id)) { r.done = false; r.completedAt = null; r.updated = Date.now(); } });
-    save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkBarExpanded = false; render();
+    save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkFolders = []; bulkBarExpanded = false; render();
   }
   function requestBulkMarkIncomplete() {
     if (selectedIds.size === 0) return;
@@ -1386,7 +1423,7 @@
     showDeleteConfirm = false;
     pendingDeleteIds = new Set();
     selectMode = false;
-    selectedIds.clear(); liveBulkTime = null; bulkBarExpanded = false;
+    selectedIds.clear(); liveBulkTime = null; bulkFolders = []; bulkBarExpanded = false;
     render();
   }
 
@@ -1830,6 +1867,7 @@
             ${!viewingTrash && !viewingFolders && selectMode ? `<button class="pill-btn select-toggle" id="deselect-all-btn">Deselect all</button>` : ''}
             <button class="pill-btn trash-toggle ${viewingTrash ? 'active' : ''}" id="trash-toggle-btn" title="Trash">&#128465; Trash${trashCount ? ` (${trashCount})` : ''}</button>
             <button class="pill-btn trash-toggle ${viewingFolders ? 'active' : ''}" id="folders-toggle-btn" title="Folders">&#128193; Folders</button>
+            ${undoStack.length > 1 ? `<button class="pill-btn trash-toggle" id="undo-btn" title="Undo last action">&#8617; Undo (${undoStack.length - 1})</button>` : ''}
           </div>
         </div>
       </div>
@@ -2090,7 +2128,11 @@
         <div class="reminder-body">
           <p class="reminder-title">${escapeHtml(r.title)}</p>
           <div class="reminder-time">${fmtTime(r.when)}${(!r.done && r.when && !due) ? ' <span class="not-due-tag">&middot; upcoming</span>' : ''}</div>
-          <div class="reminder-folders">&#128193; ${((r.folders && r.folders.length) ? r.folders : ['General']).map(f => escapeHtml(f)).join(', ')}</div>
+          ${selectMode ? `<div class="reminder-folders">&#128193; ${((r.folders && r.folders.length) ? r.folders : ['General']).map(f => escapeHtml(f)).join(', ')}</div>` : `
+          <div class="quick-folder-row">
+            <span class="priority-label">Folder</span>
+            ${renderFolderPicker('edit', r.id, r.folders)}
+          </div>`}
           ${!selectMode ? `
           <div class="priority-row">
             <span class="priority-label">Priority</span>
@@ -2139,6 +2181,11 @@
         <p class="snooze-label" style="margin:0;">Set priority to</p>
         <div class="priority-row" style="margin-top:0;">
           ${[1,2,3,4,5].map(p => priorityDotHtml(p, false, `data-bulk-priority="${p}"`)).join('')}
+        </div>
+        <p class="snooze-label" style="margin:10px 0 0;">Set folder to</p>
+        <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
+          ${renderFolderPicker('bulk', null, bulkFolders)}
+          <button class="pill-btn select-toggle" id="bulk-apply-folders-btn">Apply to ${selectedIds.size}</button>
         </div>
         <p class="snooze-label" style="margin:10px 0 0;">Snooze all for</p>
         <div class="snooze-grid">
@@ -2556,11 +2603,13 @@
     }));
 
     const bulkCancel = document.getElementById('bulk-cancel');
-    if (bulkCancel) bulkCancel.addEventListener('click', () => { selectedIds.clear(); liveBulkTime = null; bulkBarExpanded = false; render(); });
+    if (bulkCancel) bulkCancel.addEventListener('click', () => { selectedIds.clear(); liveBulkTime = null; bulkFolders = []; bulkBarExpanded = false; render(); });
     const bulkExpand = document.getElementById('bulk-expand');
     if (bulkExpand) bulkExpand.addEventListener('click', () => { bulkBarExpanded = true; render(); });
     const bulkCollapse = document.getElementById('bulk-collapse');
     if (bulkCollapse) bulkCollapse.addEventListener('click', () => { bulkBarExpanded = false; render(); });
+    const bulkApplyFoldersBtn = document.getElementById('bulk-apply-folders-btn');
+    if (bulkApplyFoldersBtn) bulkApplyFoldersBtn.addEventListener('click', applyBulkFolders);
     const bulkDelete = document.getElementById('bulk-delete');
     if (bulkDelete) bulkDelete.addEventListener('click', deleteBulk);
     const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
@@ -2571,6 +2620,8 @@
     if (trashToggleBtn) trashToggleBtn.addEventListener('click', toggleViewTrash);
     const foldersToggleBtn = document.getElementById('folders-toggle-btn');
     if (foldersToggleBtn) foldersToggleBtn.addEventListener('click', toggleViewFolders);
+    const undoBtn = document.getElementById('undo-btn');
+    if (undoBtn) undoBtn.addEventListener('click', performUndo);
     const createFolderBtn = document.getElementById('create-folder-btn');
     const newFolderInput = document.getElementById('new-folder-input');
     if (createFolderBtn && newFolderInput) {
@@ -2713,6 +2764,7 @@
   }, true);
 
   loadLocal();
+  undoStack = [snapshotState()];
   render();
   setInterval(checkDue, 10000);
   checkDue();
