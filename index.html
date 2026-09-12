@@ -928,9 +928,20 @@
     local.forEach(r => byId.set(r.id, r));
     remote.forEach(r => {
       const existing = byId.get(r.id);
+      if (!existing) { byId.set(r.id, r); return; }
+      // Version numbers are the primary signal — they only ever go up by
+      // exactly 1 per edit on whichever device made it, so comparing them
+      // doesn't depend on either device's clock being accurate. Only if
+      // both sides somehow show the same version (e.g. two edits made
+      // fully offline from each other) do we fall back to the timestamp
+      // as a tiebreaker.
+      const remoteVersion = r.version || 1;
+      const existingVersion = existing.version || 1;
+      if (remoteVersion > existingVersion) { byId.set(r.id, r); return; }
+      if (remoteVersion < existingVersion) return;
       const remoteStamp = r.updated || r.created || 0;
-      const existingStamp = existing ? (existing.updated || existing.created || 0) : -1;
-      if (!existing || remoteStamp >= existingStamp) byId.set(r.id, r);
+      const existingStamp = existing.updated || existing.created || 0;
+      if (remoteStamp >= existingStamp) byId.set(r.id, r);
     });
     return Array.from(byId.values());
   }
@@ -981,6 +992,7 @@
       trashed: false,
       trashedAt: null,
       folders: (folderList && folderList.length) ? folderList.slice() : ['General'],
+      version: 1,
       created: Date.now(),
       updated: Date.now()
     });
@@ -1041,7 +1053,7 @@
     if (!r) return;
     r.when = new Date(Date.now() + minutes * 60000).toISOString();
     r.suppressedUntil = null;
-    r.updated = Date.now();
+    r.updated = Date.now(); r.version = (r.version || 1) + 1;
     save();
     render();
   }
@@ -1050,13 +1062,13 @@
     if (!r) return;
     r.when = nextOccurrenceISO(hour);
     r.suppressedUntil = null;
-    r.updated = Date.now();
+    r.updated = Date.now(); r.version = (r.version || 1) + 1;
     save();
     render();
   }
   function setPriority(id, priority) {
     const r = reminders.find(r => r.id === id);
-    if (r) { r.priority = priority; r.updated = Date.now(); }
+    if (r) { r.priority = priority; r.updated = Date.now(); r.version = (r.version || 1) + 1; }
     save();
     render();
   }
@@ -1105,7 +1117,7 @@
       r.when = whenValue ? new Date(whenValue).toISOString() : null;
       if (liveEditPriority) r.priority = liveEditPriority;
       r.suppressedUntil = null;
-      r.updated = Date.now();
+      r.updated = Date.now(); r.version = (r.version || 1) + 1;
     }
     editingId = null;
     liveEditTitle = null;
@@ -1127,7 +1139,7 @@
     if (r) {
       r.done = !r.done;
       r.completedAt = r.done ? Date.now() : null;
-      r.updated = Date.now();
+      r.updated = Date.now(); r.version = (r.version || 1) + 1;
     }
     save();
     render();
@@ -1171,7 +1183,7 @@
     reminders.forEach(r => {
       if (r.folders && r.folders.includes(oldName)) {
         r.folders = r.folders.map(f => (f === oldName ? trimmed : f));
-        r.updated = Date.now();
+        r.updated = Date.now(); r.version = (r.version || 1) + 1;
       }
     });
     if (folderFilterSelection.includes(oldName)) {
@@ -1189,7 +1201,7 @@
       if (r.folders && r.folders.includes(name)) {
         r.folders = r.folders.filter(f => f !== name);
         if (r.folders.length === 0) r.folders = ['General'];
-        r.updated = Date.now();
+        r.updated = Date.now(); r.version = (r.version || 1) + 1;
       }
     });
     if (folderFilterSelection.includes(name)) folderFilterSelection = folderFilterSelection.filter(f => f !== name);
@@ -1238,7 +1250,7 @@
       if (!r) return;
       const cur = (r.folders && r.folders.length) ? r.folders.slice() : ['General'];
       r.folders = cur.includes(name) ? cur.filter(f => f !== name) : cur.concat([name]);
-      r.updated = Date.now();
+      r.updated = Date.now(); r.version = (r.version || 1) + 1;
       save();
     }
     render();
@@ -1255,7 +1267,7 @@
       const r = reminders.find(r => r.id === id);
       if (!r) return;
       r.folders = value;
-      r.updated = Date.now();
+      r.updated = Date.now(); r.version = (r.version || 1) + 1;
       save();
     }
     render();
@@ -1347,26 +1359,26 @@
   }
   function applyBulkSnooze(minutes) {
     const target = new Date(Date.now() + minutes * 60000).toISOString();
-    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); } });
+    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); r.version = (r.version || 1) + 1; } });
     save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkFolders = []; bulkBarExpanded = false; render();
   }
   function applyBulkSnoozeAbsolute(hour) {
     const target = nextOccurrenceISO(hour);
-    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); } });
+    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); r.version = (r.version || 1) + 1; } });
     save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkFolders = []; bulkBarExpanded = false; render();
   }
   function applyBulkTime(iso) {
     if (!iso) return;
-    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = new Date(iso).toISOString(); r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); } });
+    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = new Date(iso).toISOString(); r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); r.version = (r.version || 1) + 1; } });
     save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkFolders = []; bulkBarExpanded = false; render();
   }
   function applyBulkFolders() {
     if (selectedIds.size === 0) return;
-    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.folders = bulkFolders.slice(); r.updated = Date.now(); } });
+    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.folders = bulkFolders.slice(); r.updated = Date.now(); r.version = (r.version || 1) + 1; } });
     save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkFolders = []; openFolderPicker = null; bulkBarExpanded = false; render();
   }
   function applyBulkPriority(p) {
-    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.priority = p; r.updated = Date.now(); } });
+    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.priority = p; r.updated = Date.now(); r.version = (r.version || 1) + 1; } });
     save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkFolders = []; bulkBarExpanded = false; render();
   }
   function requestBulkPriority(p) {
@@ -1385,7 +1397,7 @@
     render();
   }
   function bulkMarkIncomplete() {
-    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.done = false; r.completedAt = null; r.updated = Date.now(); } });
+    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.done = false; r.completedAt = null; r.updated = Date.now(); r.version = (r.version || 1) + 1; } });
     save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkFolders = []; bulkBarExpanded = false; render();
   }
   function requestBulkMarkIncomplete() {
@@ -1450,12 +1462,12 @@
   }
   function restoreFromTrash(id) {
     const r = reminders.find(r => r.id === id);
-    if (r) { r.trashed = false; r.trashedAt = null; r.updated = Date.now(); save(); }
+    if (r) { r.trashed = false; r.trashedAt = null; r.updated = Date.now(); r.version = (r.version || 1) + 1; save(); }
     render();
   }
   function restoreSelectedFromTrash() {
     if (trashSelectedIds.size === 0) return;
-    reminders.forEach(r => { if (trashSelectedIds.has(r.id)) { r.trashed = false; r.trashedAt = null; r.updated = Date.now(); } });
+    reminders.forEach(r => { if (trashSelectedIds.has(r.id)) { r.trashed = false; r.trashedAt = null; r.updated = Date.now(); r.version = (r.version || 1) + 1; } });
     save();
     trashSelectMode = false;
     trashSelectedIds.clear();
@@ -1544,7 +1556,7 @@
       r.when = timeEl.value ? new Date(timeEl.value).toISOString() : null;
       if (alarmEditPriority) r.priority = alarmEditPriority;
       r.suppressedUntil = null;
-      r.updated = Date.now();
+      r.updated = Date.now(); r.version = (r.version || 1) + 1;
       save(); // also prunes the queue automatically if this is no longer due
     }
     alarmEditing = false;
@@ -1722,7 +1734,7 @@
       r.suppressedUntil = u.suppressedUntil;
       r.done = u.done;
       r.completedAt = u.completedAt;
-      r.updated = Date.now();
+      r.updated = Date.now(); r.version = (r.version || 1) + 1;
       save();
     }
     alarmQueue = u.alarmQueue;
@@ -1734,13 +1746,13 @@
   function snoozeCurrent(id, minutes) {
     lastAlarmUndo = snapshotForUndo(id);
     const r = reminders.find(r => r.id === id);
-    if (r) { r.when = new Date(Date.now() + minutes * 60000).toISOString(); r.suppressedUntil = null; r.updated = Date.now(); save(); }
+    if (r) { r.when = new Date(Date.now() + minutes * 60000).toISOString(); r.suppressedUntil = null; r.updated = Date.now(); r.version = (r.version || 1) + 1; save(); }
     alarmQueue = alarmQueue.filter(qid => qid !== id); if (lockedAlarmId === id) lockedAlarmId = null; render();
   }
   function snoozeCurrentAbsolute(id, hour) {
     lastAlarmUndo = snapshotForUndo(id);
     const r = reminders.find(r => r.id === id);
-    if (r) { r.when = nextOccurrenceISO(hour); r.suppressedUntil = null; r.updated = Date.now(); save(); }
+    if (r) { r.when = nextOccurrenceISO(hour); r.suppressedUntil = null; r.updated = Date.now(); r.version = (r.version || 1) + 1; save(); }
     alarmQueue = alarmQueue.filter(qid => qid !== id); if (lockedAlarmId === id) lockedAlarmId = null; render();
   }
   function dismissCurrent(id) {
@@ -1759,7 +1771,7 @@
       r.completedAt = Date.now();
       r.when = new Date(Date.now() + 60000).toISOString();
       r.suppressedUntil = null;
-      r.updated = Date.now();
+      r.updated = Date.now(); r.version = (r.version || 1) + 1;
       save();
     }
     alarmQueue = alarmQueue.filter(qid => qid !== id); if (lockedAlarmId === id) lockedAlarmId = null; render();
@@ -2450,7 +2462,7 @@
     if (r.done) {
       r.done = false;
       r.completedAt = null;
-      r.updated = Date.now();
+      r.updated = Date.now(); r.version = (r.version || 1) + 1;
       save();
     }
 
