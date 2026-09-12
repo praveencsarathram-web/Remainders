@@ -1018,11 +1018,10 @@
     save();
     render();
   }
-  function quickSnoozeTomorrow(id) {
+  function quickSnoozeAbsolute(id, hour) {
     const r = reminders.find(r => r.id === id);
     if (!r) return;
-    const base = r.when ? new Date(r.when) : new Date();
-    r.when = new Date(base.getTime() + 24 * 60 * 60000).toISOString();
+    r.when = nextOccurrenceISO(hour);
     r.suppressedUntil = null;
     r.updated = Date.now();
     save();
@@ -2090,8 +2089,11 @@
           <div class="quick-snooze-row">
             <span class="priority-label">Snooze</span>
             <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="5">5m</button>
+            <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="15">15m</button>
             <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="30">30m</button>
-            <button class="quick-snooze-btn" data-quick-snooze-tom="${r.id}">TOM</button>
+            <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="60">1h</button>
+            <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="120">2h</button>
+            <button class="quick-snooze-btn" data-quick-snooze-abs="${r.id}" data-hour="5">5 AM</button>
           </div>` : ''}
         </div>
         ${!selectMode ? `<button class="edit-btn" data-edit-id="${r.id}">Edit</button>` : ''}
@@ -2528,7 +2530,7 @@
     document.querySelectorAll('[data-folder-select-all-context]').forEach(el => el.addEventListener('click', () => setFolderSelectionForContext(el.dataset.folderSelectAllContext, el.dataset.folderSelectAllId || null, 'all')));
     document.querySelectorAll('[data-folder-deselect-all-context]').forEach(el => el.addEventListener('click', () => setFolderSelectionForContext(el.dataset.folderDeselectAllContext, el.dataset.folderDeselectAllId || null, 'none')));
     document.querySelectorAll('[data-quick-snooze]').forEach(el => el.addEventListener('click', () => quickSnooze(el.dataset.quickSnooze, parseInt(el.dataset.minutes, 10))));
-    document.querySelectorAll('[data-quick-snooze-tom]').forEach(el => el.addEventListener('click', () => quickSnoozeTomorrow(el.dataset.quickSnoozeTom)));
+    document.querySelectorAll('[data-quick-snooze-abs]').forEach(el => el.addEventListener('click', () => quickSnoozeAbsolute(el.dataset.quickSnoozeAbs, parseInt(el.dataset.hour, 10))));
     document.querySelectorAll('[data-edit-priority]').forEach(el => el.addEventListener('click', () => setEditPriority(parseInt(el.dataset.p, 10))));
     document.querySelectorAll('[data-alarm-priority-id]').forEach(el => el.addEventListener('click', () => setPriority(el.dataset.alarmPriorityId, parseInt(el.dataset.p, 10))));
     document.querySelectorAll('[data-edit-id]').forEach(el => el.addEventListener('click', () => startEdit(el.dataset.editId)));
