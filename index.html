@@ -246,18 +246,37 @@
   }
   .quick-snooze-btn:active { background: var(--ember); color: white; border-color: var(--ember); }
 
-  .self-desig-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
-  .self-checkbox-label {
-    display: inline-flex; align-items: center; gap: 6px; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
-    font-size: 12.5px; color: var(--ink); cursor: pointer; user-select: none;
+  .folder-picker-wrap { position: relative; display: inline-block; }
+  .folder-picker-btn {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px;
+    font-size: 12.5px; color: var(--ink); cursor: pointer; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
   }
-  .self-checkbox { width: 15px; height: 15px; cursor: pointer; accent-color: var(--ember); }
-  .category-badge {
-    display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700;
-    border-radius: 6px; padding: 3px 8px; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; letter-spacing: 0.3px;
+  .folder-picker-panel {
+    position: absolute; top: calc(100% + 6px); left: 0; z-index: 20; min-width: 180px;
+    background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 10px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.15);
   }
-  .badge-self { background: var(--ember-soft); color: var(--ember); }
-  .badge-designated { background: var(--line); color: var(--muted); }
+  .folder-picker-actions { display: flex; gap: 8px; margin-bottom: 8px; }
+  .folder-picker-actions button {
+    flex: 1; background: var(--line); border: none; border-radius: 6px; padding: 5px 6px; font-size: 11px;
+    color: var(--ink); cursor: pointer; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
+  }
+  .folder-picker-item {
+    display: flex; align-items: center; gap: 8px; padding: 5px 2px; font-size: 13px; color: var(--ink);
+    cursor: pointer; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
+  }
+  .folder-picker-item input { width: 15px; height: 15px; cursor: pointer; accent-color: var(--ember); }
+
+  .folder-create-row { display: flex; gap: 8px; margin-bottom: 10px; }
+  .folder-create-row input {
+    flex: 1; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px;
+    font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; color: var(--ink); background: var(--paper);
+  }
+  .folder-error-note { color: var(--ember); font-size: 12px; margin: -4px 0 10px; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; }
+  .folder-filter-select {
+    border: 1px solid var(--line); border-radius: 20px; padding: 4px 10px; font-size: 12px; color: var(--ink);
+    background: var(--card); cursor: pointer; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
+  }
 
   .priority-label { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 13px; color: var(--muted); margin-right: 4px; }
   .priority-dot { width: 40px; height: 40px; border-radius: 50%; border: 2px solid currentColor; cursor: pointer; padding: 0; position: relative; transition: box-shadow 0.12s ease; }
@@ -497,7 +516,14 @@
   let searchQuery = '';
   let priorityFilter = null;
   let dateFilterMode = 'all'; // 'all' | 'today'
-  let categoryFilter = 'all'; // 'all' | 'self' | 'designated'
+  let folders = ['General'];
+  let folderFilter = 'all';
+  let openFolderPicker = null; // "context:id" key of the currently open folder checklist
+  let addFolders = ['General'];
+  let viewingFolders = false;
+  let newFolderError = '';
+  let pendingDeleteFolderName = null;
+  let showDeleteFolderConfirm = false;
   let showDeleteConfirm = false;
   let showUncheckConfirm = false;
   let pendingDeleteIds = new Set();
@@ -529,7 +555,6 @@
   let liveBulkTime = null;
   let showAddPopup = false;
   let addPriority = 1;
-  let addSelfAssigned = true;
   let addAnchorTime = null;
   let editAnchorTime = null;
   let alarmEditing = false;
@@ -633,14 +658,24 @@
 
   /* ---------------- local persistence ---------------- */
   function saveLocal() {
-    try { localStorage.setItem(LOCAL_KEY, JSON.stringify(reminders)); }
+    try { localStorage.setItem(LOCAL_KEY, JSON.stringify({ reminders, folders })); }
     catch (e) { console.error('Local save failed', e); }
   }
   function loadLocal() {
     try {
       const raw = localStorage.getItem(LOCAL_KEY);
-      if (raw) reminders = JSON.parse(raw);
-    } catch (e) { reminders = []; }
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          // Legacy format: a plain reminders array with no folders list yet.
+          reminders = parsed;
+          folders = ['General'];
+        } else if (parsed && typeof parsed === 'object') {
+          reminders = Array.isArray(parsed.reminders) ? parsed.reminders : [];
+          folders = (Array.isArray(parsed.folders) && parsed.folders.length) ? parsed.folders : ['General'];
+        }
+      }
+    } catch (e) { reminders = []; folders = ['General']; }
     migrateStaleSuppressedFlags();
     loaded = true;
   }
@@ -860,16 +895,24 @@
     if (!accessToken) return;
     try {
       setDriveStatus('syncing');
+      const payload = JSON.stringify({ reminders, folders });
       if (!driveFileId) {
         const file = await findDriveFile();
-        driveFileId = file ? file.id : await createDriveFile(JSON.stringify(reminders));
+        driveFileId = file ? file.id : await createDriveFile(payload);
       }
-      await updateDriveFile(driveFileId, JSON.stringify(reminders));
+      await updateDriveFile(driveFileId, payload);
       markSynced();
       setDriveStatus('synced');
     } catch (e) {
       setDriveStatus('error', e.message || String(e));
     }
+  }
+
+  function mergeFolders(local, remote) {
+    const set = new Set(local);
+    (remote || []).forEach(f => set.add(f));
+    const merged = Array.from(set);
+    return merged.length ? merged : ['General'];
   }
 
   function mergeReminders(local, remote) {
@@ -892,10 +935,15 @@
     pullInFlight = true;
     try {
       const text = await readDriveFile(driveFileId);
-      const remote = JSON.parse(text || '[]');
-      const merged = mergeReminders(reminders, remote);
-      if (JSON.stringify(merged) !== JSON.stringify(reminders)) {
+      const parsed = JSON.parse(text || '[]');
+      const remoteReminders = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.reminders) ? parsed.reminders : []);
+      const remoteFolders = Array.isArray(parsed) ? [] : (Array.isArray(parsed.folders) ? parsed.folders : []);
+      const merged = mergeReminders(reminders, remoteReminders);
+      const mergedFolders = mergeFolders(folders, remoteFolders);
+      const changed = JSON.stringify(merged) !== JSON.stringify(reminders) || JSON.stringify(mergedFolders) !== JSON.stringify(folders);
+      if (changed) {
         reminders = merged;
+        folders = mergedFolders;
         migrateStaleSuppressedFlags();
         pruneAlarmQueue();
         saveLocal();
@@ -913,7 +961,7 @@
   /* =========================================================
      REMINDER LOGIC
      ========================================================= */
-  function addReminder(title, when, priority, selfAssigned) {
+  function addReminder(title, when, priority, folderList) {
     reminders.unshift({
       id: 'r' + Date.now() + Math.random().toString(36).slice(2, 7),
       title: title.trim(),
@@ -924,7 +972,7 @@
       suppressedUntil: null,
       trashed: false,
       trashedAt: null,
-      selfAssigned: selfAssigned !== false,
+      folders: (folderList && folderList.length) ? folderList.slice() : ['General'],
       created: Date.now(),
       updated: Date.now()
     });
@@ -934,12 +982,9 @@
   function openAddPopup() {
     showAddPopup = true;
     addPriority = 1;
-    addSelfAssigned = true;
+    addFolders = ['General'];
+    openFolderPicker = null;
     addAnchorTime = new Date().toISOString();
-    render();
-  }
-  function toggleAddSelfAssigned() {
-    addSelfAssigned = !addSelfAssigned;
     render();
   }
   function closeAddPopup() {
@@ -979,9 +1024,9 @@
     if (!title) { titleEl.focus(); return; }
     const when = timeEl.value ? new Date(timeEl.value).toISOString() : null;
     const priority = addPriority;
-    const selfAssigned = addSelfAssigned;
+    const folderList = addFolders;
     showAddPopup = false;
-    addReminder(title, when, priority, selfAssigned);
+    addReminder(title, when, priority, folderList);
   }
   function quickSnooze(id, minutes) {
     const r = reminders.find(r => r.id === id);
@@ -1080,18 +1125,118 @@
     save();
     render();
   }
-  function toggleSelfAssigned(id) {
-    const r = reminders.find(r => r.id === id);
-    if (r) {
-      r.selfAssigned = !(r.selfAssigned !== false);
+  function setFolderFilterVal(name) {
+    folderFilter = name;
+    render();
+  }
+  function toggleViewFolders() {
+    viewingFolders = !viewingFolders;
+    desktopNav = viewingFolders ? 'folders' : 'dashboard';
+    if (viewingFolders) { showSettings = false; selectMode = false; viewingTrash = false; }
+    newFolderError = '';
+    render();
+  }
+  function createFolder(name) {
+    const trimmed = (name || '').trim();
+    if (!trimmed) { newFolderError = 'Enter a folder name.'; render(); return; }
+    const exists = folders.some(f => f.toLowerCase() === trimmed.toLowerCase());
+    if (exists) { newFolderError = 'That folder already exists.'; render(); return; }
+    folders.push(trimmed);
+    newFolderError = '';
+    save();
+    render();
+  }
+  function deleteFolder(name) {
+    if (name === 'General') return; // General is the permanent fallback bucket
+    folders = folders.filter(f => f !== name);
+    reminders.forEach(r => {
+      if (r.folders && r.folders.includes(name)) {
+        r.folders = r.folders.filter(f => f !== name);
+        if (r.folders.length === 0) r.folders = ['General'];
+        r.updated = Date.now();
+      }
+    });
+    if (folderFilter === name) folderFilter = 'all';
+    save();
+    render();
+  }
+  function requestDeleteFolder(name) {
+    if (name === 'General') return;
+    pendingDeleteFolderName = name;
+    showDeleteFolderConfirm = true;
+    render();
+  }
+  function confirmDeleteFolder() {
+    if (pendingDeleteFolderName) deleteFolder(pendingDeleteFolderName);
+    pendingDeleteFolderName = null;
+    showDeleteFolderConfirm = false;
+    render();
+  }
+  function cancelDeleteFolder() {
+    pendingDeleteFolderName = null;
+    showDeleteFolderConfirm = false;
+    render();
+  }
+
+  function folderSummaryText(list) {
+    const arr = (list && list.length) ? list : ['General'];
+    if (arr.length === 1) return arr[0];
+    return `${arr[0]} +${arr.length - 1} more`;
+  }
+  function toggleFolderPickerOpen(key) {
+    openFolderPicker = (openFolderPicker === key) ? null : key;
+    render();
+  }
+  function toggleFolderForContext(context, id, name) {
+    if (context === 'add') {
+      if (addFolders.includes(name)) addFolders = addFolders.filter(f => f !== name);
+      else addFolders = addFolders.concat([name]);
+    } else {
+      const r = reminders.find(r => r.id === id);
+      if (!r) return;
+      const cur = (r.folders && r.folders.length) ? r.folders.slice() : ['General'];
+      r.folders = cur.includes(name) ? cur.filter(f => f !== name) : cur.concat([name]);
       r.updated = Date.now();
       save();
     }
     render();
   }
-  function setCategoryFilter(cat) {
-    categoryFilter = cat;
+  function setFolderSelectionForContext(context, id, mode) {
+    const value = mode === 'all' ? folders.slice() : [];
+    if (context === 'add') {
+      addFolders = value;
+    } else {
+      const r = reminders.find(r => r.id === id);
+      if (!r) return;
+      r.folders = value;
+      r.updated = Date.now();
+      save();
+    }
     render();
+  }
+  function renderFolderPicker(context, id, currentFolders) {
+    const key = `${context}:${id || ''}`;
+    const isOpen = openFolderPicker === key;
+    const selected = (currentFolders && currentFolders.length) ? currentFolders : ['General'];
+    return `
+      <div class="folder-picker-wrap">
+        <button type="button" class="folder-picker-btn" data-folder-picker-toggle="${key}">${escapeHtml(folderSummaryText(selected))} &#9662;</button>
+        ${isOpen ? `
+          <div class="folder-picker-panel">
+            <div class="folder-picker-actions">
+              <button type="button" data-folder-select-all-context="${context}" data-folder-select-all-id="${id || ''}">Select all</button>
+              <button type="button" data-folder-deselect-all-context="${context}" data-folder-deselect-all-id="${id || ''}">Deselect all</button>
+            </div>
+            ${folders.map(f => `
+              <label class="folder-picker-item">
+                <input type="checkbox" data-folder-toggle-context="${context}" data-folder-toggle-id="${id || ''}" data-folder-toggle-name="${escapeHtml(f)}" ${selected.includes(f) ? 'checked' : ''} />
+                ${escapeHtml(f)}
+              </label>
+            `).join('')}
+          </div>
+        ` : ''}
+      </div>
+    `;
   }
   function removeReminder(id) {
     reminders = reminders.filter(r => r.id !== id);
@@ -1118,7 +1263,7 @@
     searchQuery = '';
     priorityFilter = null;
     dateFilterMode = 'all';
-    categoryFilter = 'all';
+    folderFilter = 'all';
     dueStateFilter = null;
     desktopNav = 'dashboard';
     selectMode = false;
@@ -1204,7 +1349,7 @@
   function toggleViewTrash() {
     viewingTrash = !viewingTrash;
     desktopNav = viewingTrash ? 'trash' : 'dashboard';
-    if (viewingTrash) { showSettings = false; selectMode = false; }
+    if (viewingTrash) { showSettings = false; selectMode = false; viewingFolders = false; }
     trashSelectMode = false;
     trashSelectedIds.clear();
     render();
@@ -1349,8 +1494,10 @@
       const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
       if (!sameDay) return false;
     }
-    if (categoryFilter === 'self' && r.selfAssigned === false) return false;
-    if (categoryFilter === 'designated' && r.selfAssigned !== false) return false;
+    if (folderFilter !== 'all') {
+      const rFolders = (r.folders && r.folders.length) ? r.folders : ['General'];
+      if (!rFolders.includes(folderFilter)) return false;
+    }
     return true;
   }
   function togglePriorityFilter(p) {
@@ -1378,7 +1525,7 @@
   }
 
   function downloadBackup() {
-    const blob = new Blob([JSON.stringify(reminders, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ reminders, folders }, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1394,8 +1541,18 @@
     reader.onload = () => {
       try {
         const restored = JSON.parse(reader.result);
-        if (!Array.isArray(restored)) throw new Error('Not a valid backup file');
-        reminders = mergeReminders(reminders, restored);
+        let restoredReminders, restoredFolders;
+        if (Array.isArray(restored)) {
+          restoredReminders = restored;
+          restoredFolders = [];
+        } else if (restored && Array.isArray(restored.reminders)) {
+          restoredReminders = restored.reminders;
+          restoredFolders = Array.isArray(restored.folders) ? restored.folders : [];
+        } else {
+          throw new Error('Not a valid backup file');
+        }
+        reminders = mergeReminders(reminders, restoredReminders);
+        folders = mergeFolders(folders, restoredFolders);
         save();
         render();
       } catch (e) {
@@ -1612,34 +1769,35 @@
             <span class="count">${totalActiveCount} active</span>
             <button class="pill-btn settings-toggle" id="settings-toggle">${showSettings ? 'Close' : 'Sync'}</button>
             <button class="pill-btn alerts-toggle ${alertsPaused ? 'paused' : ''}" id="alerts-toggle" title="${alertsPaused ? 'Alerts paused — tap to resume' : 'Alerts on — tap to pause'}">${alertsPaused ? '\ud83d\udd15 Paused' : '\ud83d\udd14 Alerts'}</button>
-            ${!viewingTrash ? `
+            ${!viewingTrash && !viewingFolders ? `
             <div class="mobile-unchecked-switch">
               <button class="switch-segment ${dueStateFilter === 'unchecked' ? 'active' : ''}" data-stat-filter="unchecked">Unchecked</button>
               <button class="switch-segment ${dueStateFilter !== 'unchecked' ? 'active' : ''}" id="mobile-switch-all">All</button>
             </div>` : ''}
           </div>
           <div class="header-right-row">
-            ${!viewingTrash && visibleCount ? `<button class="search-toggle-btn ${showSearchBar ? 'active' : ''}" id="search-toggle-btn" title="${showSearchBar ? 'Hide search' : 'Search'}">\ud83d\udd0d</button>` : ''}
-            ${!viewingTrash && visibleCount ? `<button class="pill-btn select-toggle" id="select-toggle">${selectMode ? 'Cancel' : 'Select'}</button>` : ''}
-            ${!viewingTrash && selectMode ? `<button class="pill-btn select-toggle" id="select-all-btn">Select all</button>` : ''}
-            ${!viewingTrash && selectMode ? `<button class="pill-btn select-toggle" id="deselect-all-btn">Deselect all</button>` : ''}
+            ${!viewingTrash && !viewingFolders && visibleCount ? `<button class="search-toggle-btn ${showSearchBar ? 'active' : ''}" id="search-toggle-btn" title="${showSearchBar ? 'Hide search' : 'Search'}">\ud83d\udd0d</button>` : ''}
+            ${!viewingTrash && !viewingFolders && visibleCount ? `<button class="pill-btn select-toggle" id="select-toggle">${selectMode ? 'Cancel' : 'Select'}</button>` : ''}
+            ${!viewingTrash && !viewingFolders && selectMode ? `<button class="pill-btn select-toggle" id="select-all-btn">Select all</button>` : ''}
+            ${!viewingTrash && !viewingFolders && selectMode ? `<button class="pill-btn select-toggle" id="deselect-all-btn">Deselect all</button>` : ''}
             <button class="pill-btn trash-toggle ${viewingTrash ? 'active' : ''}" id="trash-toggle-btn" title="Trash">&#128465; Trash${trashCount ? ` (${trashCount})` : ''}</button>
+            <button class="pill-btn trash-toggle ${viewingFolders ? 'active' : ''}" id="folders-toggle-btn" title="Folders">&#128193; Folders</button>
           </div>
         </div>
       </div>
-      <p class="subtitle">A quiet place to keep track of what's next.</p>
-      <p class="desktop-greeting">${getGreeting()}</p>
+      ${!viewingFolders ? `<p class="subtitle">A quiet place to keep track of what's next.</p>` : ''}
+      ${!viewingFolders ? `<p class="desktop-greeting">${getGreeting()}</p>` : ''}
 
-      ${!selectMode && !viewingTrash ? `
+      ${!selectMode && !viewingTrash && !viewingFolders ? `
       <button class="add-trigger-btn" id="add-trigger-btn">+ Add reminder</button>` : ''}
 
       
 
-      ${!viewingTrash ? renderDashboardStats() : ''}
-      ${renderSyncStatus()}
+      ${!viewingTrash && !viewingFolders ? renderDashboardStats() : ''}
+      ${!viewingFolders ? renderSyncStatus() : ''}
       ${showSettings ? renderSettings() : ''}
 
-      ${viewingTrash ? renderTrashView() : (visibleCount ? `
+      ${viewingTrash ? renderTrashView() : (viewingFolders ? renderFoldersView() : (visibleCount ? `
       ${showSearchBar ? `
       <div class="search-bar">
         <input type="text" id="search-input" placeholder="Search reminders..." value="${escapeHtml(searchQuery)}" autofocus />
@@ -1660,19 +1818,21 @@
         <button class="sort-chip ${dateFilterMode === 'today' ? 'active' : ''}" data-date-filter="today">Today only</button>
       </div>
       <div class="sort-row">
-        <span class="sort-label">Category</span>
-        <button class="sort-chip ${categoryFilter === 'all' ? 'active' : ''}" data-category-filter="all">All</button>
-        <button class="sort-chip ${categoryFilter === 'self' ? 'active' : ''}" data-category-filter="self">Self</button>
-        <button class="sort-chip ${categoryFilter === 'designated' ? 'active' : ''}" data-category-filter="designated">Designated</button>
-      </div>` : '')}
+        <span class="sort-label">Folder</span>
+        <select id="folder-filter-select" class="folder-filter-select">
+          <option value="all" ${folderFilter === 'all' ? 'selected' : ''}>All</option>
+          ${folders.map(f => `<option value="${escapeHtml(f)}" ${folderFilter === f ? 'selected' : ''}>${escapeHtml(f)}</option>`).join('')}
+        </select>
+      </div>` : ''))}
 
-      ${viewingTrash ? '' : (!loaded ? '<div class="empty-state">Loading...</div>' : renderLists(active, done))}
+      ${(viewingTrash || viewingFolders) ? '' : (!loaded ? '<div class="empty-state">Loading...</div>' : renderLists(active, done))}
 
       ${selectMode && selectedIds.size > 0 ? renderBulkBar() : ''}
       ${showAddPopup ? renderAddPopup(savedTitleValue, savedTimeValue) : ''}
       ${alarmQueue.length && !alertsPaused && !editingId ? renderAlarm() : ''}
       ${showDeleteConfirm ? renderDeleteConfirm() : ''}
       ${showTrashDeleteConfirm ? renderTrashDeleteConfirm() : ''}
+      ${showDeleteFolderConfirm ? renderDeleteFolderConfirm() : ''}
       ${showUncheckConfirm ? renderUncheckConfirm() : ''}
       ${pendingPriorityChange ? renderPriorityConfirm() : ''}
       ${pendingBulkPriority !== null ? renderBulkPriorityConfirm() : ''}
@@ -1716,11 +1876,13 @@
   function goToDesktopNav(view) {
     desktopNav = view;
     viewingTrash = (view === 'trash');
+    viewingFolders = (view === 'folders');
     if (view === 'dashboard') { dateFilterMode = 'all'; priorityFilter = null; searchQuery = ''; showSettings = false; dueStateFilter = null; }
     else if (view === 'today') { dateFilterMode = 'today'; showSettings = false; dueStateFilter = null; }
     else if (view === 'upcoming') { dateFilterMode = 'all'; showSettings = false; dueStateFilter = 'upcoming'; }
     else if (view === 'checked') { showSettings = false; dueStateFilter = 'checked'; }
     else if (view === 'trash') { showSettings = false; selectMode = false; trashSelectMode = false; trashSelectedIds.clear(); }
+    else if (view === 'folders') { showSettings = false; selectMode = false; newFolderError = ''; }
     else if (view === 'settings') { showSettings = true; }
     render();
   }
@@ -1736,7 +1898,8 @@
       { key: 'upcoming', label: 'Upcoming' },
       { key: 'checked', label: 'Checked' },
       { key: 'trash', label: `Trash${trashCount ? ` (${trashCount})` : ''}` },
-      { key: 'settings', label: 'Settings' }
+      { key: 'settings', label: 'Settings' },
+      { key: 'folders', label: 'Folders' }
     ];
     return `
       <div class="sidebar-logo"><img src="data:image/png;base64,${LOGO_B64}" alt="TLS Solutions" /></div>
@@ -1832,7 +1995,6 @@
     const picked = selectedIds.has(r.id);
     const priority = r.priority || 3;
     const due = isDue(r);
-    const isSelf = r.selfAssigned !== false;
 
     if (editingId === r.id) {
       const titleVal = liveEditTitle !== null ? liveEditTitle : r.title;
@@ -1862,13 +2024,8 @@
             <div class="priority-row" style="margin-top:0;">
               ${[1,2,3,4,5].map(p => priorityDotHtml(p, liveEditPriority === p, `data-edit-priority="${r.id}"`)).join('')}
             </div>
-            <div class="self-desig-row">
-              <label class="self-checkbox-label">
-                <input type="checkbox" class="self-checkbox" data-self-toggle="${r.id}" ${isSelf ? 'checked' : ''} />
-                Self
-              </label>
-              <span class="category-badge ${isSelf ? 'badge-self' : 'badge-designated'}">${isSelf ? 'Self' : 'Designated'}</span>
-            </div>
+            <p class="snooze-label" style="margin:10px 0 2px;">Folder</p>
+            ${renderFolderPicker('edit', r.id, r.folders)}
             <div class="edit-actions" style="margin-top:10px;">
               <button class="edit-save-btn" data-save-edit="${r.id}">Save</button>
               <button class="edit-cancel-btn" data-cancel-edit="${r.id}">Cancel</button>
@@ -1892,13 +2049,6 @@
           <div class="priority-row">
             <span class="priority-label">Priority</span>
             ${[1,2,3,4,5].map(p => priorityDotHtml(p, priority === p, `data-priority-id="${r.id}"`)).join('')}
-          </div>
-          <div class="self-desig-row">
-            <label class="self-checkbox-label">
-              <input type="checkbox" class="self-checkbox" data-self-toggle="${r.id}" ${isSelf ? 'checked' : ''} />
-              Self
-            </label>
-            <span class="category-badge ${isSelf ? 'badge-self' : 'badge-designated'}">${isSelf ? 'Self' : 'Designated'}</span>
           </div>
           <div class="quick-snooze-row">
             <span class="priority-label">Snooze</span>
@@ -2017,6 +2167,21 @@
       </div>
     `;
   }
+  function renderDeleteFolderConfirm() {
+    return `
+      <div class="alarm-overlay">
+        <div class="alarm-card">
+          <div class="alarm-glyph" style="background:var(--ember-soft); color:var(--ember);">&#9888;</div>
+          <p class="alarm-title">Delete folder "${escapeHtml(pendingDeleteFolderName || '')}"?</p>
+          <p class="alarm-time">Its reminders will move back to General.</p>
+          <div class="alarm-actions">
+            <button class="alarm-done-btn" id="confirm-delete-folder-btn" style="background:var(--ember);">Delete</button>
+            <button class="alarm-dismiss-btn" id="cancel-delete-folder-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
   function renderTrashView() {
     const trashedItems = reminders.filter(r => r.trashed).sort((a, b) => (b.trashedAt || 0) - (a.trashedAt || 0));
     return `
@@ -2046,6 +2211,32 @@
             </div>` : ''}
           </div>
         `).join('')}</div>`}
+    `;
+  }
+  function renderFoldersView() {
+    return `
+      <div class="trash-header-row">
+        <p class="trash-count-label">${folders.length} folder${folders.length === 1 ? '' : 's'}</p>
+      </div>
+      <div class="folder-create-row">
+        <input type="text" id="new-folder-input" placeholder="New folder name..." />
+        <button class="pill-btn select-toggle" id="create-folder-btn">Create</button>
+      </div>
+      ${newFolderError ? `<p class="folder-error-note">${escapeHtml(newFolderError)}</p>` : ''}
+      <div class="reminder-list">
+        ${folders.map(f => {
+          const count = reminders.filter(r => !r.trashed && ((r.folders && r.folders.length) ? r.folders : ['General']).includes(f)).length;
+          return `
+          <div class="reminder trash-item">
+            <div class="reminder-body">
+              <p class="reminder-title">${escapeHtml(f)}</p>
+              <div class="reminder-time">${count} reminder${count === 1 ? '' : 's'}</div>
+            </div>
+            ${f !== 'General' ? `<button class="edit-btn" style="background:var(--ember-soft); color:var(--ember);" data-delete-folder="${escapeHtml(f)}">Delete</button>` : ''}
+          </div>
+        `;
+        }).join('')}
+      </div>
     `;
   }
   function renderUncheckConfirm() {
@@ -2119,12 +2310,9 @@
           <div class="priority-row" style="justify-content:center; margin-top:0;">
             ${[1,2,3,4,5].map(p => priorityDotHtml(p, addPriority === p, `data-add-priority="${p}"`)).join('')}
           </div>
-          <div class="self-desig-row" style="justify-content:center;">
-            <label class="self-checkbox-label">
-              <input type="checkbox" class="self-checkbox" id="add-self-toggle" ${addSelfAssigned ? 'checked' : ''} />
-              Self
-            </label>
-            <span class="category-badge ${addSelfAssigned ? 'badge-self' : 'badge-designated'}">${addSelfAssigned ? 'Self' : 'Designated'}</span>
+          <p class="snooze-label" style="text-align:center;">Folder</p>
+          <div style="display:flex; justify-content:center;">
+            ${renderFolderPicker('add', null, addFolders)}
           </div>
           <div class="alarm-actions" style="margin-top:18px;">
             <button class="alarm-done-btn" id="add-submit-btn" style="background:var(--ember);">Add reminder</button>
@@ -2182,12 +2370,9 @@
             <div class="priority-row" style="justify-content:center; margin-top:0;">
               ${[1,2,3,4,5].map(p => priorityDotHtml(p, alarmEditPriority === p, `data-alarm-edit-priority="${p}"`)).join('')}
             </div>
-            <div class="self-desig-row" style="justify-content:center;">
-              <label class="self-checkbox-label">
-                <input type="checkbox" class="self-checkbox" data-self-toggle="${r.id}" ${r.selfAssigned !== false ? 'checked' : ''} />
-                Self
-              </label>
-              <span class="category-badge ${r.selfAssigned !== false ? 'badge-self' : 'badge-designated'}">${r.selfAssigned !== false ? 'Self' : 'Designated'}</span>
+            <p class="snooze-label" style="text-align:center;">Folder</p>
+            <div style="display:flex; justify-content:center;">
+              ${renderFolderPicker('alarmedit', r.id, r.folders)}
             </div>
             <div class="alarm-actions" style="margin-top:18px;">
               <button class="alarm-done-btn" id="alarm-edit-save" style="background:var(--ember);">Save</button>
@@ -2212,12 +2397,9 @@
           <div class="priority-row" style="justify-content:center; margin-top:0 0 16px;">
             ${[1,2,3,4,5].map(p => priorityDotHtml(p, priority === p, `data-alarm-priority-id="${r.id}"`)).join('')}
           </div>
-          <div class="self-desig-row" style="justify-content:center;">
-            <label class="self-checkbox-label">
-              <input type="checkbox" class="self-checkbox" data-self-toggle="${r.id}" ${r.selfAssigned !== false ? 'checked' : ''} />
-              Self
-            </label>
-            <span class="category-badge ${r.selfAssigned !== false ? 'badge-self' : 'badge-designated'}">${r.selfAssigned !== false ? 'Self' : 'Designated'}</span>
+          <p class="snooze-label">Folder</p>
+          <div style="display:flex; justify-content:center; margin-bottom:6px;">
+            ${renderFolderPicker('alarm', r.id, r.folders)}
           </div>
           <p class="snooze-label">Snooze for</p>
           <div class="snooze-grid">
@@ -2271,8 +2453,6 @@
     });
     const addSubmitBtn = document.getElementById('add-submit-btn');
     if (addSubmitBtn) addSubmitBtn.addEventListener('click', submitAddPopup);
-    const addSelfToggle = document.getElementById('add-self-toggle');
-    if (addSelfToggle) addSelfToggle.addEventListener('click', toggleAddSelfAssigned);
     const addCancelBtn = document.getElementById('add-cancel-btn');
     if (addCancelBtn) addCancelBtn.addEventListener('click', closeAddPopup);
     const addPopupTitle = document.getElementById('add-popup-title');
@@ -2284,7 +2464,12 @@
     document.querySelectorAll('.check').forEach(el => el.addEventListener('click', () => toggleDone(el.dataset.id)));
     document.querySelectorAll('[data-pick]').forEach(el => el.addEventListener('click', () => togglePick(el.dataset.pick)));
     document.querySelectorAll('[data-priority-id]').forEach(el => el.addEventListener('click', () => requestPriorityChange(el.dataset.priorityId, parseInt(el.dataset.p, 10))));
-    document.querySelectorAll('[data-self-toggle]').forEach(el => el.addEventListener('click', () => toggleSelfAssigned(el.dataset.selfToggle)));
+    document.querySelectorAll('[data-folder-picker-toggle]').forEach(el => el.addEventListener('click', () => toggleFolderPickerOpen(el.dataset.folderPickerToggle)));
+    document.querySelectorAll('[data-folder-toggle-context]').forEach(el => el.addEventListener('click', () => toggleFolderForContext(el.dataset.folderToggleContext, el.dataset.folderToggleId || null, el.dataset.folderToggleName)));
+    document.querySelectorAll('[data-folder-select-all-context]').forEach(el => el.addEventListener('click', () => setFolderSelectionForContext(el.dataset.folderSelectAllContext, el.dataset.folderSelectAllId || null, 'all')));
+    document.querySelectorAll('[data-folder-deselect-all-context]').forEach(el => el.addEventListener('click', () => setFolderSelectionForContext(el.dataset.folderDeselectAllContext, el.dataset.folderDeselectAllId || null, 'none')));
+    const folderFilterSelect = document.getElementById('folder-filter-select');
+    if (folderFilterSelect) folderFilterSelect.addEventListener('change', e => setFolderFilterVal(e.target.value));
     document.querySelectorAll('[data-quick-snooze]').forEach(el => el.addEventListener('click', () => quickSnooze(el.dataset.quickSnooze, parseInt(el.dataset.minutes, 10))));
     document.querySelectorAll('[data-quick-snooze-tom]').forEach(el => el.addEventListener('click', () => quickSnoozeTomorrow(el.dataset.quickSnoozeTom)));
     document.querySelectorAll('[data-edit-priority]').forEach(el => el.addEventListener('click', () => setEditPriority(parseInt(el.dataset.p, 10))));
@@ -2315,6 +2500,19 @@
     if (cancelDeleteBtn) cancelDeleteBtn.addEventListener('click', cancelDelete);
     const trashToggleBtn = document.getElementById('trash-toggle-btn');
     if (trashToggleBtn) trashToggleBtn.addEventListener('click', toggleViewTrash);
+    const foldersToggleBtn = document.getElementById('folders-toggle-btn');
+    if (foldersToggleBtn) foldersToggleBtn.addEventListener('click', toggleViewFolders);
+    const createFolderBtn = document.getElementById('create-folder-btn');
+    const newFolderInput = document.getElementById('new-folder-input');
+    if (createFolderBtn && newFolderInput) {
+      createFolderBtn.addEventListener('click', () => { createFolder(newFolderInput.value); });
+      newFolderInput.addEventListener('keydown', e => { if (e.key === 'Enter') createFolder(newFolderInput.value); });
+    }
+    document.querySelectorAll('[data-delete-folder]').forEach(el => el.addEventListener('click', () => requestDeleteFolder(el.dataset.deleteFolder)));
+    const confirmDeleteFolderBtn = document.getElementById('confirm-delete-folder-btn');
+    if (confirmDeleteFolderBtn) confirmDeleteFolderBtn.addEventListener('click', confirmDeleteFolder);
+    const cancelDeleteFolderBtn = document.getElementById('cancel-delete-folder-btn');
+    if (cancelDeleteFolderBtn) cancelDeleteFolderBtn.addEventListener('click', cancelDeleteFolder);
     const mobileSwitchAll = document.getElementById('mobile-switch-all');
     if (mobileSwitchAll) mobileSwitchAll.addEventListener('click', () => { dueStateFilter = null; render(); });
     const trashSelectToggle = document.getElementById('trash-select-toggle');
@@ -2427,14 +2625,21 @@
     document.querySelectorAll('[data-date-filter]').forEach(el => {
       el.addEventListener('click', () => setDateFilterMode(el.dataset.dateFilter));
     });
-    document.querySelectorAll('[data-category-filter]').forEach(el => {
-      el.addEventListener('click', () => setCategoryFilter(el.dataset.categoryFilter));
-    });
   }
 
   /* =========================================================
      BOOT
      ========================================================= */
+  // Closes any open folder-picker checklist when the user clicks/taps
+  // anywhere outside it. Capture phase + registered once (not per-render)
+  // so it never fights with the picker's own toggle button.
+  document.addEventListener('click', (e) => {
+    if (openFolderPicker && !e.target.closest('.folder-picker-wrap')) {
+      openFolderPicker = null;
+      render();
+    }
+  }, true);
+
   loadLocal();
   render();
   setInterval(checkDue, 10000);
