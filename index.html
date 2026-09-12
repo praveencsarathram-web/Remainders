@@ -43,7 +43,21 @@
      reminder list itself is unchanged so every feature keeps working
      identically either way. */
   .app-shell { display: block; }
-  .app-sidebar, .dashboard-stats, .desktop-greeting { display: none; }
+  .app-sidebar, .desktop-greeting { display: none; }
+  .dashboard-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 22px; }
+  .stat-card {
+    background: var(--done-bg); border-radius: 12px; padding: 10px 10px; display: flex; flex-direction: column; gap: 3px;
+    border: 2px solid transparent; cursor: pointer; text-align: left; font-family: 'IBM Plex Sans', sans-serif;
+    transition: box-shadow 0.12s ease, border-color 0.12s ease;
+  }
+  .stat-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+  .stat-card.stat-active { border-color: var(--gold); }
+  .stat-card .stat-label { font-family: 'IBM Plex Sans', sans-serif; font-size: 10.5px; color: var(--muted); font-weight: 600; }
+  .stat-card .stat-value { font-size: 22px; font-weight: 700; color: var(--gold); }
+  .stat-card.stat-due { background: #eafaf7; }
+  .stat-card.stat-upcoming { background: #eaf0f8; }
+  .stat-card.stat-checked { background: #eafaf3; }
+
 
   @media (min-width: 900px) {
     body { background: var(--paper); }
@@ -68,19 +82,10 @@
     .header-right-row { justify-content: flex-end; }
     #app-root > .brand-logo { display: none; }
     .desktop-greeting { display: block; font-size: 30px; font-weight: 700; color: var(--ink); margin: 2px 0 6px; }
-    .dashboard-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 26px; }
-    .stat-card {
-      background: var(--done-bg); border-radius: 14px; padding: 16px 18px; display: flex; flex-direction: column; gap: 4px;
-      border: 2px solid transparent; cursor: pointer; text-align: left; font-family: 'IBM Plex Sans', sans-serif;
-      transition: box-shadow 0.12s ease, border-color 0.12s ease;
-    }
-    .stat-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-    .stat-card.stat-active { border-color: var(--gold); }
-    .stat-card .stat-label { font-family: 'IBM Plex Sans', sans-serif; font-size: 12.5px; color: var(--muted); font-weight: 600; }
-    .stat-card .stat-value { font-size: 30px; font-weight: 700; color: var(--gold); }
-    .stat-card.stat-due { background: #eafaf7; }
-    .stat-card.stat-upcoming { background: #eaf0f8; }
-    .stat-card.stat-checked { background: #eafaf3; }
+    .dashboard-stats { grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 26px; }
+    .stat-card { border-radius: 14px; padding: 16px 18px; gap: 4px; }
+    .stat-card .stat-label { font-size: 12.5px; }
+    .stat-card .stat-value { font-size: 30px; }
   }
 
   body { min-height: 100vh; }
@@ -117,16 +122,14 @@
   .alerts-toggle { color: var(--ink); background: var(--line); }
   .alerts-toggle.paused { color: white; background: var(--ember); }
 
-  .mobile-unchecked-switch {
-    display: inline-flex; align-items: center; background: var(--line); border-radius: 20px; padding: 2px; flex-shrink: 0;
+  .mini-stats-row { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .mini-stat-pill {
+    border: none; background: var(--line); color: var(--ink); font-size: 11.5px; font-weight: 600;
+    padding: 5px 10px; border-radius: 16px; cursor: pointer; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
   }
-  .switch-segment {
-    border: none; background: transparent; color: var(--muted); font-size: 12px; font-weight: 600;
-    padding: 5px 11px; border-radius: 18px; cursor: pointer; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
-  }
-  .switch-segment.active { background: var(--ember); color: white; }
+  .mini-stat-pill.active { background: var(--ember); color: white; }
   @media (min-width: 900px) {
-    .mobile-unchecked-switch { display: none; }
+    .mini-stats-row { display: none; }
   }
 
   .search-toggle-btn {
@@ -1810,6 +1813,9 @@
     const totalActiveCount = reminders.filter(r => !r.done && !r.trashed).length;
     const visibleCount = reminders.filter(r => !r.trashed).length;
     const trashCount = reminders.filter(r => r.trashed).length;
+    const miniDueCount = reminders.filter(r => !r.done && matchesFilters(r) && isDue(r)).length;
+    const miniUncheckedCount = reminders.filter(r => !r.done && matchesFilters(r)).length;
+    const miniCheckedCount = reminders.filter(r => r.done && matchesFilters(r)).length;
 
     root.innerHTML = `
       <div class="brand-logo"><img src="data:image/png;base64,${LOGO_B64}" alt="TLS Solutions" /></div>
@@ -1821,9 +1827,10 @@
             <button class="pill-btn settings-toggle" id="settings-toggle">${showSettings ? 'Close' : 'Sync'}</button>
             <button class="pill-btn alerts-toggle ${alertsPaused ? 'paused' : ''}" id="alerts-toggle" title="${alertsPaused ? 'Alerts paused — tap to resume' : 'Alerts on — tap to pause'}">${alertsPaused ? '\ud83d\udd15 Paused' : '\ud83d\udd14 Alerts'}</button>
             ${!viewingTrash && !viewingFolders ? `
-            <div class="mobile-unchecked-switch">
-              <button class="switch-segment ${dueStateFilter === 'unchecked' ? 'active' : ''}" data-stat-filter="unchecked">Unchecked</button>
-              <button class="switch-segment ${dueStateFilter !== 'unchecked' ? 'active' : ''}" id="mobile-switch-all">All</button>
+            <div class="mini-stats-row">
+              <button class="mini-stat-pill ${dueStateFilter === 'due' ? 'active' : ''}" data-stat-filter="due">Due ${miniDueCount}</button>
+              <button class="mini-stat-pill ${dueStateFilter === 'unchecked' ? 'active' : ''}" data-stat-filter="unchecked">Unchecked ${miniUncheckedCount}</button>
+              <button class="mini-stat-pill ${dueStateFilter === 'checked' ? 'active' : ''}" data-stat-filter="checked">Checked ${miniCheckedCount}</button>
             </div>` : ''}
           </div>
           <div class="header-right-row">
@@ -1958,9 +1965,9 @@
   }
 
   function renderDashboardStats() {
-    const dueTodayCount = reminders.filter(r => !r.done && !r.trashed && isDue(r)).length;
-    const uncheckedCount = reminders.filter(r => !r.done && !r.trashed).length;
-    const checkedCount = reminders.filter(r => r.done && !r.trashed).length;
+    const dueTodayCount = reminders.filter(r => !r.done && matchesFilters(r) && isDue(r)).length;
+    const uncheckedCount = reminders.filter(r => !r.done && matchesFilters(r)).length;
+    const checkedCount = reminders.filter(r => r.done && matchesFilters(r)).length;
     return `
       <div class="dashboard-stats">
         <button class="stat-card stat-due ${dueStateFilter === 'due' ? 'stat-active' : ''}" data-stat-filter="due"><span class="stat-label">DUE NOW</span><span class="stat-value">${dueTodayCount}</span></button>
@@ -2586,8 +2593,6 @@
     if (confirmDeleteFolderBtn) confirmDeleteFolderBtn.addEventListener('click', confirmDeleteFolder);
     const cancelDeleteFolderBtn = document.getElementById('cancel-delete-folder-btn');
     if (cancelDeleteFolderBtn) cancelDeleteFolderBtn.addEventListener('click', cancelDeleteFolder);
-    const mobileSwitchAll = document.getElementById('mobile-switch-all');
-    if (mobileSwitchAll) mobileSwitchAll.addEventListener('click', () => { dueStateFilter = null; render(); });
     const trashSelectToggle = document.getElementById('trash-select-toggle');
     if (trashSelectToggle) trashSelectToggle.addEventListener('click', toggleTrashSelectMode);
     const trashSelectAllBtn = document.getElementById('trash-select-all-btn');
