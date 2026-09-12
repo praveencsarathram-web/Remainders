@@ -96,7 +96,8 @@
   .brand-logo img { height: 34px; width: auto; display: block; }
   .header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
   .header h1 { font-size: 28px; font-weight: 400; letter-spacing: 0.2px; margin: 0; }
-  .header-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+  .header-right-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
   .header .count { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 13px; color: var(--muted); }
 
   .pill-btn {
@@ -112,6 +113,18 @@
   .settings-toggle { color: var(--ink); background: var(--line); }
   .alerts-toggle { color: var(--ink); background: var(--line); }
   .alerts-toggle.paused { color: white; background: var(--ember); }
+
+  .mobile-unchecked-switch {
+    display: inline-flex; align-items: center; background: var(--line); border-radius: 20px; padding: 2px; flex-shrink: 0;
+  }
+  .switch-segment {
+    border: none; background: transparent; color: var(--muted); font-size: 12px; font-weight: 600;
+    padding: 5px 11px; border-radius: 18px; cursor: pointer; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
+  }
+  .switch-segment.active { background: var(--ember); color: white; }
+  @media (min-width: 900px) {
+    .mobile-unchecked-switch { display: none; }
+  }
 
   .search-toggle-btn {
     width: 32px; height: 32px; border-radius: 50%; border: none; background: var(--line); color: var(--ink);
@@ -298,9 +311,10 @@
     align-items: center;
     gap: 6px;
     margin-bottom: 20px;
+    flex-wrap: nowrap;
     font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
   }
-  .priority-filter-label { font-size: 11.5px; color: var(--muted); margin-right: 2px; }
+  .priority-filter-label { flex-shrink: 0; font-size: 11.5px; color: var(--muted); margin-right: 2px; }
 
   .sort-row {
     display: flex;
@@ -371,12 +385,17 @@
   .edit-save-btn { background: var(--ember); color: white; }
   .edit-cancel-btn { background: var(--line); color: var(--ink); }
   .priority-filter-chip {
-    width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid currentColor;
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 72px;
+    height: 34px;
+    border-radius: 17px;
+    border: 1.5px solid currentColor;
     cursor: pointer; position: relative; padding: 0;
   }
   .priority-filter-chip::before {
     content: attr(data-p); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    font-size: 10.5px; font-weight: 700; color: currentColor;
+    font-size: 13px; font-weight: 700; color: currentColor;
   }
 
   .alarm-priority {
@@ -1586,14 +1605,23 @@
       <div class="header">
         <h1>Reminders</h1>
         <div class="header-right">
-          <span class="count">${totalActiveCount} active</span>
-          <button class="pill-btn settings-toggle" id="settings-toggle">${showSettings ? 'Close' : 'Sync'}</button>
-          <button class="pill-btn alerts-toggle ${alertsPaused ? 'paused' : ''}" id="alerts-toggle" title="${alertsPaused ? 'Alerts paused — tap to resume' : 'Alerts on — tap to pause'}">${alertsPaused ? '\ud83d\udd15 Paused' : '\ud83d\udd14 Alerts'}</button>
-          ${!viewingTrash && visibleCount ? `<button class="search-toggle-btn ${showSearchBar ? 'active' : ''}" id="search-toggle-btn" title="${showSearchBar ? 'Hide search' : 'Search'}">\ud83d\udd0d</button>` : ''}
-          ${!viewingTrash && visibleCount ? `<button class="pill-btn select-toggle" id="select-toggle">${selectMode ? 'Cancel' : 'Select'}</button>` : ''}
-          ${!viewingTrash && selectMode ? `<button class="pill-btn select-toggle" id="select-all-btn">Select all</button>` : ''}
-          ${!viewingTrash && selectMode ? `<button class="pill-btn select-toggle" id="deselect-all-btn">Deselect all</button>` : ''}
-          <button class="pill-btn trash-toggle ${viewingTrash ? 'active' : ''}" id="trash-toggle-btn" title="Trash">&#128465; Trash${trashCount ? ` (${trashCount})` : ''}</button>
+          <div class="header-right-row">
+            <span class="count">${totalActiveCount} active</span>
+            <button class="pill-btn settings-toggle" id="settings-toggle">${showSettings ? 'Close' : 'Sync'}</button>
+            <button class="pill-btn alerts-toggle ${alertsPaused ? 'paused' : ''}" id="alerts-toggle" title="${alertsPaused ? 'Alerts paused — tap to resume' : 'Alerts on — tap to pause'}">${alertsPaused ? '\ud83d\udd15 Paused' : '\ud83d\udd14 Alerts'}</button>
+            ${!viewingTrash ? `
+            <div class="mobile-unchecked-switch">
+              <button class="switch-segment ${dueStateFilter === 'unchecked' ? 'active' : ''}" data-stat-filter="unchecked">Unchecked</button>
+              <button class="switch-segment ${dueStateFilter !== 'unchecked' ? 'active' : ''}" id="mobile-switch-all">All</button>
+            </div>` : ''}
+          </div>
+          <div class="header-right-row">
+            ${!viewingTrash && visibleCount ? `<button class="search-toggle-btn ${showSearchBar ? 'active' : ''}" id="search-toggle-btn" title="${showSearchBar ? 'Hide search' : 'Search'}">\ud83d\udd0d</button>` : ''}
+            ${!viewingTrash && visibleCount ? `<button class="pill-btn select-toggle" id="select-toggle">${selectMode ? 'Cancel' : 'Select'}</button>` : ''}
+            ${!viewingTrash && selectMode ? `<button class="pill-btn select-toggle" id="select-all-btn">Select all</button>` : ''}
+            ${!viewingTrash && selectMode ? `<button class="pill-btn select-toggle" id="deselect-all-btn">Deselect all</button>` : ''}
+            <button class="pill-btn trash-toggle ${viewingTrash ? 'active' : ''}" id="trash-toggle-btn" title="Trash">&#128465; Trash${trashCount ? ` (${trashCount})` : ''}</button>
+          </div>
         </div>
       </div>
       <p class="subtitle">A quiet place to keep track of what's next.</p>
@@ -2284,6 +2312,8 @@
     if (cancelDeleteBtn) cancelDeleteBtn.addEventListener('click', cancelDelete);
     const trashToggleBtn = document.getElementById('trash-toggle-btn');
     if (trashToggleBtn) trashToggleBtn.addEventListener('click', toggleViewTrash);
+    const mobileSwitchAll = document.getElementById('mobile-switch-all');
+    if (mobileSwitchAll) mobileSwitchAll.addEventListener('click', () => { dueStateFilter = null; render(); });
     const trashSelectToggle = document.getElementById('trash-select-toggle');
     if (trashSelectToggle) trashSelectToggle.addEventListener('click', toggleTrashSelectMode);
     const trashSelectAllBtn = document.getElementById('trash-select-all-btn');
