@@ -314,17 +314,6 @@
     color: var(--ink);
     outline: none;
   }
-  .search-clear {
-    background: var(--line);
-    border: none;
-    border-radius: 10px;
-    padding: 0 12px;
-    font-size: 13px;
-    color: var(--ink);
-    cursor: pointer;
-    font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
-  }
-
   .priority-filter {
     display: flex;
     align-items: center;
@@ -1322,6 +1311,7 @@
     selectedIds.clear();
     liveBulkTime = null;
     searchQuery = '';
+    showSearchBar = false;
     priorityFilter = null;
     dateFilterMode = 'all';
     folderFilterSelection = [];
@@ -1862,7 +1852,6 @@
       ${showSearchBar ? `
       <div class="search-bar">
         <input type="text" id="search-input" placeholder="Search reminders..." value="${escapeHtml(searchQuery)}" autofocus />
-        ${searchQuery ? `<button class="search-clear" id="search-clear">Clear</button>` : ''}
       </div>` : ''}
       <div class="priority-filter">
         <span class="priority-filter-label">Search with priority</span>
@@ -1989,8 +1978,8 @@
     else if (driveStatus === 'synced') { label = 'Synced with Google Drive'; cls = 'on'; }
     else if (driveStatus === 'error') { label = 'Drive sync error: ' + escapeHtml(driveError); cls = 'err'; }
     else { label = 'Drive connected'; cls = 'on'; }
-    const lastSyncedLine = lastSyncedAt ? `<div class="sync-status" style="margin-top:-2px;"><span class="sync-dot"></span>Last synced: ${fmtSyncedTime(lastSyncedAt)}</div>` : '';
-    return `<div class="sync-status"><span class="sync-dot ${cls}"></span>${label}</div>${lastSyncedLine}`;
+    const lastSyncedText = lastSyncedAt ? ` &middot; Last synced: ${fmtSyncedTime(lastSyncedAt)}` : '';
+    return `<div class="sync-status"><span class="sync-dot ${cls}"></span>${label}${lastSyncedText}</div>`;
   }
 
   function renderSettings() {
@@ -2515,7 +2504,11 @@
     if (alertsToggle) alertsToggle.addEventListener('click', togglePauseAlerts);
 
     const searchToggleBtn = document.getElementById('search-toggle-btn');
-    if (searchToggleBtn) searchToggleBtn.addEventListener('click', () => { showSearchBar = !showSearchBar; render(); });
+    if (searchToggleBtn) searchToggleBtn.addEventListener('click', () => {
+      showSearchBar = !showSearchBar;
+      if (!showSearchBar) searchQuery = '';
+      render();
+    });
     const pauseAlertsBtn = document.getElementById('pause-alerts-btn');
     if (pauseAlertsBtn) pauseAlertsBtn.addEventListener('click', togglePauseAlerts);
     const alarmPreviousBtn = document.getElementById('alarm-previous-btn');
@@ -2694,8 +2687,6 @@
     if (searchInput) {
       searchInput.addEventListener('input', () => { searchQuery = searchInput.value; render(); });
     }
-    const searchClear = document.getElementById('search-clear');
-    if (searchClear) searchClear.addEventListener('click', () => { searchQuery = ''; render(); });
     document.querySelectorAll('[data-filter-priority]').forEach(el => {
       el.addEventListener('click', () => togglePriorityFilter(parseInt(el.dataset.filterPriority, 10)));
     });
