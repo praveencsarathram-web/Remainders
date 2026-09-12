@@ -1240,6 +1240,10 @@
     render();
   }
 
+  function displayFolders() {
+    const rest = folders.filter(f => f !== 'General').sort((a, b) => a.localeCompare(b));
+    return folders.includes('General') ? ['General', ...rest] : rest;
+  }
   function folderSummaryText(list) {
     const arr = (list && list.length) ? list : ['General'];
     if (arr.length === 1) return arr[0];
@@ -1300,7 +1304,7 @@
               <button type="button" data-folder-deselect-all-context="${context}" data-folder-deselect-all-id="${id || ''}">Deselect all</button>
             </div>
             <div class="folder-picker-list">
-              ${folders.map(f => `
+              ${displayFolders().map(f => `
                 <label class="folder-picker-item">
                   <input type="checkbox" data-folder-toggle-context="${context}" data-folder-toggle-id="${id || ''}" data-folder-toggle-name="${escapeHtml(f)}" ${selected.includes(f) ? 'checked' : ''} />
                   ${escapeHtml(f)}
@@ -1327,7 +1331,7 @@
               <button type="button" data-folder-deselect-all-context="${context}" data-folder-deselect-all-id="">Deselect all</button>
             </div>
             <div class="folder-picker-list">
-              ${folders.map(f => `
+              ${displayFolders().map(f => `
                 <label class="folder-picker-item">
                   <input type="checkbox" data-folder-toggle-context="${context}" data-folder-toggle-id="" data-folder-toggle-name="${escapeHtml(f)}" ${folderFilterSelection.includes(f) ? 'checked' : ''} />
                   ${escapeHtml(f)}
@@ -2348,7 +2352,7 @@
       </div>
       ${newFolderError ? `<p class="folder-error-note">${escapeHtml(newFolderError)}</p>` : ''}
       <div class="reminder-list">
-        ${folders.map(f => {
+        ${displayFolders().map(f => {
           const count = reminders.filter(r => !r.trashed && ((r.folders && r.folders.length) ? r.folders : ['General']).includes(f)).length;
           if (editingFolderName === f) {
             return `
