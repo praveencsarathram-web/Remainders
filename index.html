@@ -562,6 +562,7 @@
   let driveStatus = 'idle'; // idle | connecting | syncing | synced | retrying | error | not-configured
   let driveError = '';
   let lastSyncedAt = parseInt(localStorage.getItem('reminders_last_synced_at') || '0', 10) || null;
+  let allSynced = false; // true only when this device's data is confirmed identical to what's on Drive right now
   function markSynced() {
     lastSyncedAt = Date.now();
     try { localStorage.setItem('reminders_last_synced_at', String(lastSyncedAt)); } catch (e) {}
@@ -711,6 +712,7 @@
   }
 
   function save() {
+    allSynced = false;
     pruneAlarmQueue();
     saveLocal();
     if (accessToken) {
@@ -880,8 +882,12 @@
         migrateStaleSuppressedFlags();
         pruneAlarmQueue();
         saveLocal();
+        // Push the reconciled result straight back so Drive holds the
+        // complete, canonical copy — same reasoning as the background pull.
+        await pushToDrive();
       } else {
         driveFileId = await createDriveFile(JSON.stringify({ reminders, folders, snoozeHistory }));
+        allSynced = true;
       }
       markSynced();
       setDriveStatus('synced');
@@ -903,9 +909,11 @@
       await updateDriveFile(driveFileId, payload);
       markSynced();
       setDriveStatus('synced');
+      allSynced = true;
       pushRetryAttempt = 0;
       clearTimeout(pushRetryTimer);
     } catch (e) {
+      allSynced = false;
       setDriveStatus('retrying', e.message || String(e));
       scheduleRetryPush();
     }
@@ -982,6 +990,12 @@
         pruneAlarmQueue();
         saveLocal();
         render();
+        // The merge just combined in something Drive didn't have (or vice
+        // versa) — push the fully-reconciled result straight back so Drive
+        // itself becomes the complete, canonical copy other devices will see.
+        await pushToDrive();
+      } else {
+        allSynced = true;
       }
       markSynced();
       setDriveStatus('synced');
@@ -2139,17 +2153,27 @@
     `;
   }
 
+  function computeSyncFingerprint() {
+    const sortedReminders = [...reminders].sort((a, b) => a.id.localeCompare(b.id));
+    const str = JSON.stringify(sortedReminders) + JSON.stringify(folders.slice().sort()) + JSON.stringify(snoozeHistory);
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+    }
+    return Math.abs(hash).toString(36).toUpperCase().padStart(6, '0').slice(0, 8);
+  }
   function renderSyncStatus() {
     let label, cls;
     if (!clientId || !appsScriptUrl || !appsScriptSecret) { label = 'Drive sync not set up — tap "Sync"'; cls = ''; }
     else if (!accessToken) { label = 'Drive not connected — tap "Sync"'; cls = ''; }
     else if (driveStatus === 'syncing' || driveStatus === 'connecting') { label = 'Syncing with Drive…'; cls = 'on'; }
     else if (driveStatus === 'retrying') { label = 'Waiting to sync — retrying automatically'; cls = ''; }
-    else if (driveStatus === 'synced') { label = 'Synced with Google Drive'; cls = 'on'; }
+    else if (driveStatus === 'synced') { label = allSynced ? '&#9989; All Devices Synced' : 'Synced with Google Drive'; cls = 'on'; }
     else if (driveStatus === 'error') { label = 'Drive sync error: ' + escapeHtml(driveError); cls = 'err'; }
     else { label = 'Drive connected'; cls = 'on'; }
     const lastSyncedText = lastSyncedAt ? ` &middot; Last synced: ${fmtSyncedTime(lastSyncedAt)}` : '';
-    return `<div class="sync-status"><span class="sync-dot ${cls}"></span>${label}${lastSyncedText}</div>`;
+    const codeText = ` &middot; Code: ${computeSyncFingerprint()}`;
+    return `<div class="sync-status"><span class="sync-dot ${cls}"></span>${label}${lastSyncedText}${codeText}</div>`;
   }
 
   function renderSettings() {
