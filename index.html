@@ -1281,14 +1281,22 @@
     }
     render();
   }
-  function quickSetFolderShortcut(context, id, name) {
+  function togglePriorityFolderShortcut(context, id) {
+    const name = 'Priority';
     if (!folders.some(f => f.toLowerCase() === name.toLowerCase())) folders.push(name);
     if (context === 'add') {
-      addFolders = [name];
+      if (addFolders.includes(name)) addFolders = addFolders.filter(f => f !== name);
+      else addFolders = addFolders.concat([name]);
     } else {
       const r = reminders.find(r => r.id === id);
       if (!r) return;
-      r.folders = [name];
+      const cur = (r.folders && r.folders.length) ? r.folders.slice() : ['General'];
+      if (cur.includes(name)) {
+        r.folders = cur.filter(f => f !== name);
+        if (r.folders.length === 0) r.folders = ['General'];
+      } else {
+        r.folders = cur.concat([name]);
+      }
       r.updated = Date.now(); r.version = (r.version || 1) + 1;
       save();
     }
@@ -1296,12 +1304,10 @@
   }
   function renderFolderShortcuts(context, id, currentFolders) {
     const selected = (currentFolders && currentFolders.length) ? currentFolders : ['General'];
-    const isGeneral = selected.length === 1 && selected[0] === 'General';
-    const isPriority = selected.length === 1 && selected[0] === 'Priority';
+    const hasPriority = selected.includes('Priority');
     return `
       <div class="folder-shortcut-row">
-        <button type="button" class="folder-shortcut-pill ${isGeneral ? 'active' : ''}" data-folder-shortcut-context="${context}" data-folder-shortcut-id="${id || ''}" data-folder-shortcut-name="General">General</button>
-        <button type="button" class="folder-shortcut-pill ${isPriority ? 'active' : ''}" data-folder-shortcut-context="${context}" data-folder-shortcut-id="${id || ''}" data-folder-shortcut-name="Priority">Priority</button>
+        <button type="button" class="folder-shortcut-pill ${hasPriority ? 'active' : ''}" data-folder-shortcut-toggle-context="${context}" data-folder-shortcut-toggle-id="${id || ''}">Priority</button>
       </div>
     `;
   }
@@ -1963,6 +1969,7 @@
             <button class="pill-btn settings-toggle" id="settings-toggle">${showSettings ? 'Close' : 'Sync'}</button>
             <button class="pill-btn alerts-toggle ${alertsPaused ? 'paused' : ''}" id="alerts-toggle" title="${alertsPaused ? 'Alerts paused — tap to resume' : 'Alerts on — tap to pause'}">${alertsPaused ? '\ud83d\udd15 Paused' : '\ud83d\udd14 Alerts'}</button>
             <button class="pill-btn trash-toggle ${viewingSnoozeHistory ? 'active' : ''}" id="snooze-history-toggle-btn" title="Snoozed reminders">&#128564; Snoozed${snoozeHistory.length ? ` (${snoozeHistory.length})` : ''}</button>
+            <button class="pill-btn trash-toggle" id="top-priority-btn" title="Priority folder, Priority 1">TOP</button>
           </div>
           <div class="header-right-row">
             ${!viewingTrash && !viewingFolders && !viewingSnoozeHistory && visibleCount ? `<button class="search-toggle-btn ${showSearchBar ? 'active' : ''}" id="search-toggle-btn" title="${showSearchBar ? 'Hide search' : 'Search'}">\ud83d\udd0d</button>` : ''}
@@ -2418,6 +2425,25 @@
         `).join('')}</div>`}
     `;
   }
+  function goToTopPriority() {
+    viewingFolders = false;
+    viewingTrash = false;
+    viewingSnoozeHistory = false;
+    desktopNav = 'dashboard';
+    folderFilterSelection = ['Priority'];
+    priorityFilter = 1;
+    dueStateFilter = null;
+    render();
+  }
+  function viewFolderReminders(name) {
+    viewingFolders = false;
+    viewingTrash = false;
+    viewingSnoozeHistory = false;
+    desktopNav = 'dashboard';
+    folderFilterSelection = [name];
+    dueStateFilter = null;
+    render();
+  }
   function renderFoldersView() {
     return `
       <div class="trash-header-row">
@@ -2446,7 +2472,7 @@
           }
           return `
           <div class="reminder trash-item">
-            <div class="reminder-body">
+            <div class="reminder-body" style="cursor:pointer;" data-view-folder="${escapeHtml(f)}">
               <p class="reminder-title">${escapeHtml(f)}</p>
               <div class="reminder-time">${count} reminder${count === 1 ? '' : 's'}</div>
             </div>
@@ -2723,7 +2749,7 @@
     document.querySelectorAll('[data-folder-toggle-context]').forEach(el => el.addEventListener('click', () => toggleFolderForContext(el.dataset.folderToggleContext, el.dataset.folderToggleId || null, el.dataset.folderToggleName)));
     document.querySelectorAll('[data-folder-select-all-context]').forEach(el => el.addEventListener('click', () => setFolderSelectionForContext(el.dataset.folderSelectAllContext, el.dataset.folderSelectAllId || null, 'all')));
     document.querySelectorAll('[data-folder-deselect-all-context]').forEach(el => el.addEventListener('click', () => setFolderSelectionForContext(el.dataset.folderDeselectAllContext, el.dataset.folderDeselectAllId || null, 'none')));
-    document.querySelectorAll('[data-folder-shortcut-context]').forEach(el => el.addEventListener('click', () => quickSetFolderShortcut(el.dataset.folderShortcutContext, el.dataset.folderShortcutId || null, el.dataset.folderShortcutName)));
+    document.querySelectorAll('[data-folder-shortcut-toggle-context]').forEach(el => el.addEventListener('click', () => togglePriorityFolderShortcut(el.dataset.folderShortcutToggleContext, el.dataset.folderShortcutToggleId || null)));
     document.querySelectorAll('[data-quick-snooze]').forEach(el => el.addEventListener('click', () => quickSnooze(el.dataset.quickSnooze, parseInt(el.dataset.minutes, 10))));
     document.querySelectorAll('[data-quick-snooze-abs]').forEach(el => el.addEventListener('click', () => quickSnoozeAbsolute(el.dataset.quickSnoozeAbs, parseInt(el.dataset.hour, 10))));
     document.querySelectorAll('[data-edit-priority]').forEach(el => el.addEventListener('click', () => setEditPriority(parseInt(el.dataset.p, 10))));
@@ -2771,6 +2797,8 @@
     }
     const snoozeHistoryToggleBtn = document.getElementById('snooze-history-toggle-btn');
     if (snoozeHistoryToggleBtn) snoozeHistoryToggleBtn.addEventListener('click', toggleViewSnoozeHistory);
+    const topPriorityBtn = document.getElementById('top-priority-btn');
+    if (topPriorityBtn) topPriorityBtn.addEventListener('click', goToTopPriority);
     const createFolderBtn = document.getElementById('create-folder-btn');
     const newFolderInput = document.getElementById('new-folder-input');
     if (createFolderBtn && newFolderInput) {
@@ -2779,6 +2807,7 @@
     }
     document.querySelectorAll('[data-delete-folder]').forEach(el => el.addEventListener('click', () => requestDeleteFolder(el.dataset.deleteFolder)));
     document.querySelectorAll('[data-edit-folder]').forEach(el => el.addEventListener('click', () => startEditFolder(el.dataset.editFolder)));
+    document.querySelectorAll('[data-view-folder]').forEach(el => el.addEventListener('click', () => viewFolderReminders(el.dataset.viewFolder)));
     const cancelRenameFolderBtn = document.getElementById('cancel-rename-folder-btn');
     if (cancelRenameFolderBtn) cancelRenameFolderBtn.addEventListener('click', cancelEditFolder);
     document.querySelectorAll('[data-save-rename-folder]').forEach(el => el.addEventListener('click', () => {
