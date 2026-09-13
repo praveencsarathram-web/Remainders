@@ -2284,7 +2284,11 @@
             <button class="quick-snooze-btn" data-quick-snooze-abs="${r.id}" data-hour="5">5 AM</button>
           </div>` : ''}
         </div>
-        ${!selectMode ? `<button class="edit-btn" data-edit-id="${r.id}">Edit</button>` : ''}
+        ${!selectMode ? `
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <button class="edit-btn" style="background:var(--ember-soft); color:var(--ember);" data-delete-from-card="${r.id}">Delete</button>
+          <button class="edit-btn" data-edit-id="${r.id}">Edit</button>
+        </div>` : ''}
       </div>
     `;
   }
@@ -2781,6 +2785,7 @@
     document.querySelectorAll('[data-edit-bump-abs]').forEach(el => el.addEventListener('click', () => { bumpEditTimeAbsolute(el.dataset.editBumpAbs, parseInt(el.dataset.hour, 10)); markSnoozeSelected(el); }));
     document.querySelectorAll('[data-cancel-edit]').forEach(el => el.addEventListener('click', cancelEdit));
     document.querySelectorAll('[data-delete-from-edit]').forEach(el => el.addEventListener('click', () => deleteFromEdit(el.dataset.deleteFromEdit)));
+    document.querySelectorAll('[data-delete-from-card]').forEach(el => el.addEventListener('click', () => deleteFromEdit(el.dataset.deleteFromCard)));
     document.querySelectorAll('[data-save-edit]').forEach(el => el.addEventListener('click', () => {
       const id = el.dataset.saveEdit;
       const titleEl = document.getElementById('edit-title-' + id);
