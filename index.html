@@ -647,7 +647,7 @@
 
   /* ---------------- local persistence ---------------- */
   function saveLocal() {
-    try { localStorage.setItem(LOCAL_KEY, JSON.stringify({ reminders, folders })); }
+    try { localStorage.setItem(LOCAL_KEY, JSON.stringify({ reminders, folders, snoozeHistory })); }
     catch (e) { console.error('Local save failed', e); }
   }
   function loadLocal() {
@@ -662,6 +662,7 @@
         } else if (parsed && typeof parsed === 'object') {
           reminders = Array.isArray(parsed.reminders) ? parsed.reminders : [];
           folders = (Array.isArray(parsed.folders) && parsed.folders.length) ? parsed.folders : ['General'];
+          snoozeHistory = Array.isArray(parsed.snoozeHistory) ? parsed.snoozeHistory : [];
         }
       }
     } catch (e) { reminders = []; folders = ['General']; }
@@ -872,13 +873,15 @@
         const parsed = JSON.parse(text || '[]');
         const remoteReminders = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.reminders) ? parsed.reminders : []);
         const remoteFolders = Array.isArray(parsed) ? [] : (Array.isArray(parsed.folders) ? parsed.folders : []);
+        const remoteSnoozeHistory = Array.isArray(parsed) ? [] : (Array.isArray(parsed.snoozeHistory) ? parsed.snoozeHistory : []);
         reminders = mergeReminders(reminders, remoteReminders);
         folders = mergeFolders(folders, remoteFolders);
+        snoozeHistory = mergeSnoozeHistory(snoozeHistory, remoteSnoozeHistory);
         migrateStaleSuppressedFlags();
         pruneAlarmQueue();
         saveLocal();
       } else {
-        driveFileId = await createDriveFile(JSON.stringify({ reminders, folders }));
+        driveFileId = await createDriveFile(JSON.stringify({ reminders, folders, snoozeHistory }));
       }
       markSynced();
       setDriveStatus('synced');
@@ -892,7 +895,7 @@
     if (!accessToken) return;
     try {
       setDriveStatus('syncing');
-      const payload = JSON.stringify({ reminders, folders });
+      const payload = JSON.stringify({ reminders, folders, snoozeHistory });
       if (!driveFileId) {
         const file = await findDriveFile();
         driveFileId = file ? file.id : await createDriveFile(payload);
@@ -919,6 +922,17 @@
     (remote || []).forEach(f => set.add(f));
     const merged = Array.from(set);
     return merged.length ? merged : ['General'];
+  }
+  function mergeSnoozeHistory(local, remote) {
+    const combined = [...(local || []), ...(remote || [])];
+    const seen = new Set();
+    const deduped = [];
+    combined.forEach(entry => {
+      const key = entry.id + '|' + entry.at + '|' + entry.when;
+      if (!seen.has(key)) { seen.add(key); deduped.push(entry); }
+    });
+    deduped.sort((a, b) => b.at - a.at);
+    return deduped.slice(0, 20);
   }
 
   function mergeReminders(local, remote) {
@@ -955,12 +969,15 @@
       const parsed = JSON.parse(text || '[]');
       const remoteReminders = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.reminders) ? parsed.reminders : []);
       const remoteFolders = Array.isArray(parsed) ? [] : (Array.isArray(parsed.folders) ? parsed.folders : []);
+      const remoteSnoozeHistory = Array.isArray(parsed) ? [] : (Array.isArray(parsed.snoozeHistory) ? parsed.snoozeHistory : []);
       const merged = mergeReminders(reminders, remoteReminders);
       const mergedFolders = mergeFolders(folders, remoteFolders);
-      const changed = JSON.stringify(merged) !== JSON.stringify(reminders) || JSON.stringify(mergedFolders) !== JSON.stringify(folders);
+      const mergedSnoozeHistory = mergeSnoozeHistory(snoozeHistory, remoteSnoozeHistory);
+      const changed = JSON.stringify(merged) !== JSON.stringify(reminders) || JSON.stringify(mergedFolders) !== JSON.stringify(folders) || JSON.stringify(mergedSnoozeHistory) !== JSON.stringify(snoozeHistory);
       if (changed) {
         reminders = merged;
         folders = mergedFolders;
+        snoozeHistory = mergedSnoozeHistory;
         migrateStaleSuppressedFlags();
         pruneAlarmQueue();
         saveLocal();
@@ -1046,7 +1063,7 @@
     showAddPopup = false;
     addReminder(title, when, priority, folderList);
   }
-  let snoozeHistory = []; // in-memory only; resets on reload, same as Undo
+  let snoozeHistory = []; // persisted locally and synced via Drive, same as reminders/folders
   function logSnooze(id, title, newWhenISO) {
     snoozeHistory.unshift({ id, title, when: newWhenISO, at: Date.now() });
     if (snoozeHistory.length > 20) snoozeHistory.length = 20;
@@ -1281,8 +1298,7 @@
     }
     render();
   }
-  function togglePriorityFolderShortcut(context, id) {
-    const name = 'Priority';
+  function toggleQuickFolderShortcut(context, id, name) {
     if (!folders.some(f => f.toLowerCase() === name.toLowerCase())) folders.push(name);
     if (context === 'add') {
       if (addFolders.includes(name)) addFolders = addFolders.filter(f => f !== name);
@@ -1304,10 +1320,12 @@
   }
   function renderFolderShortcuts(context, id, currentFolders) {
     const selected = (currentFolders && currentFolders.length) ? currentFolders : ['General'];
-    const hasPriority = selected.includes('Priority');
+    const shortcutNames = ['Priority', 'Praveen'];
     return `
       <div class="folder-shortcut-row">
-        <button type="button" class="folder-shortcut-pill ${hasPriority ? 'active' : ''}" data-folder-shortcut-toggle-context="${context}" data-folder-shortcut-toggle-id="${id || ''}">Priority</button>
+        ${shortcutNames.map(name => `
+          <button type="button" class="folder-shortcut-pill ${selected.includes(name) ? 'active' : ''}" data-folder-shortcut-toggle-context="${context}" data-folder-shortcut-toggle-id="${id || ''}" data-folder-shortcut-toggle-name="${escapeHtml(name)}">${escapeHtml(name)}</button>
+        `).join('')}
       </div>
     `;
   }
@@ -1730,7 +1748,7 @@
   }
 
   function downloadBackup() {
-    const blob = new Blob([JSON.stringify({ reminders, folders }, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ reminders, folders, snoozeHistory }, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1746,18 +1764,21 @@
     reader.onload = () => {
       try {
         const restored = JSON.parse(reader.result);
-        let restoredReminders, restoredFolders;
+        let restoredReminders, restoredFolders, restoredSnoozeHistory;
         if (Array.isArray(restored)) {
           restoredReminders = restored;
           restoredFolders = [];
+          restoredSnoozeHistory = [];
         } else if (restored && Array.isArray(restored.reminders)) {
           restoredReminders = restored.reminders;
           restoredFolders = Array.isArray(restored.folders) ? restored.folders : [];
+          restoredSnoozeHistory = Array.isArray(restored.snoozeHistory) ? restored.snoozeHistory : [];
         } else {
           throw new Error('Not a valid backup file');
         }
         reminders = mergeReminders(reminders, restoredReminders);
         folders = mergeFolders(folders, restoredFolders);
+        snoozeHistory = mergeSnoozeHistory(snoozeHistory, restoredSnoozeHistory);
         save();
         render();
       } catch (e) {
@@ -1969,7 +1990,6 @@
             <button class="pill-btn settings-toggle" id="settings-toggle">${showSettings ? 'Close' : 'Sync'}</button>
             <button class="pill-btn alerts-toggle ${alertsPaused ? 'paused' : ''}" id="alerts-toggle" title="${alertsPaused ? 'Alerts paused — tap to resume' : 'Alerts on — tap to pause'}">${alertsPaused ? '\ud83d\udd15 Paused' : '\ud83d\udd14 Alerts'}</button>
             <button class="pill-btn trash-toggle ${viewingSnoozeHistory ? 'active' : ''}" id="snooze-history-toggle-btn" title="Snoozed reminders">&#128564; Snoozed${snoozeHistory.length ? ` (${snoozeHistory.length})` : ''}</button>
-            <button class="pill-btn trash-toggle" id="top-priority-btn" title="Priority folder, Priority 1">TOP</button>
           </div>
           <div class="header-right-row">
             ${!viewingTrash && !viewingFolders && !viewingSnoozeHistory && visibleCount ? `<button class="search-toggle-btn ${showSearchBar ? 'active' : ''}" id="search-toggle-btn" title="${showSearchBar ? 'Hide search' : 'Search'}">\ud83d\udd0d</button>` : ''}
@@ -1979,6 +1999,7 @@
             <button class="pill-btn trash-toggle ${viewingTrash ? 'active' : ''}" id="trash-toggle-btn" title="Trash">&#128465; Trash${trashCount ? ` (${trashCount})` : ''}</button>
             <button class="pill-btn trash-toggle ${viewingFolders ? 'active' : ''}" id="folders-toggle-btn" title="Folders">&#128193; Folders</button>
             <button class="pill-btn trash-toggle" id="import-excel-btn" title="Import reminders from Excel">&#128229; Import</button>
+            <button class="pill-btn trash-toggle" id="top-priority-btn" title="Priority folder, Priority 1">TOP</button>
             <input type="file" id="import-excel-input" accept=".xlsx,.xls" style="position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;" />
           </div>
         </div>
@@ -2489,7 +2510,7 @@
   }
   function renderSnoozeHistoryView() {
     if (!snoozeHistory.length) {
-      return `<div class="empty-state">No reminders have been snoozed yet this session.</div>`;
+      return `<div class="empty-state">No reminders have been snoozed yet.</div>`;
     }
     return `
       <div class="trash-header-row">
@@ -2749,7 +2770,7 @@
     document.querySelectorAll('[data-folder-toggle-context]').forEach(el => el.addEventListener('click', () => toggleFolderForContext(el.dataset.folderToggleContext, el.dataset.folderToggleId || null, el.dataset.folderToggleName)));
     document.querySelectorAll('[data-folder-select-all-context]').forEach(el => el.addEventListener('click', () => setFolderSelectionForContext(el.dataset.folderSelectAllContext, el.dataset.folderSelectAllId || null, 'all')));
     document.querySelectorAll('[data-folder-deselect-all-context]').forEach(el => el.addEventListener('click', () => setFolderSelectionForContext(el.dataset.folderDeselectAllContext, el.dataset.folderDeselectAllId || null, 'none')));
-    document.querySelectorAll('[data-folder-shortcut-toggle-context]').forEach(el => el.addEventListener('click', () => togglePriorityFolderShortcut(el.dataset.folderShortcutToggleContext, el.dataset.folderShortcutToggleId || null)));
+    document.querySelectorAll('[data-folder-shortcut-toggle-context]').forEach(el => el.addEventListener('click', () => toggleQuickFolderShortcut(el.dataset.folderShortcutToggleContext, el.dataset.folderShortcutToggleId || null, el.dataset.folderShortcutToggleName)));
     document.querySelectorAll('[data-quick-snooze]').forEach(el => el.addEventListener('click', () => quickSnooze(el.dataset.quickSnooze, parseInt(el.dataset.minutes, 10))));
     document.querySelectorAll('[data-quick-snooze-abs]').forEach(el => el.addEventListener('click', () => quickSnoozeAbsolute(el.dataset.quickSnoozeAbs, parseInt(el.dataset.hour, 10))));
     document.querySelectorAll('[data-edit-priority]').forEach(el => el.addEventListener('click', () => setEditPriority(parseInt(el.dataset.p, 10))));
