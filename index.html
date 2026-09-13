@@ -2478,6 +2478,7 @@
       <div class="reminder-list">
         ${displayFolders().map(f => {
           const count = reminders.filter(r => !r.trashed && ((r.folders && r.folders.length) ? r.folders : ['General']).includes(f)).length;
+          const dueCount = reminders.filter(r => !r.trashed && !r.done && isDue(r) && ((r.folders && r.folders.length) ? r.folders : ['General']).includes(f)).length;
           if (editingFolderName === f) {
             return `
             <div class="reminder trash-item">
@@ -2495,7 +2496,7 @@
           <div class="reminder trash-item">
             <div class="reminder-body" style="cursor:pointer;" data-view-folder="${escapeHtml(f)}">
               <p class="reminder-title">${escapeHtml(f)}</p>
-              <div class="reminder-time">${count} reminder${count === 1 ? '' : 's'}</div>
+              <div class="reminder-time">${count} reminder${count === 1 ? '' : 's'}${dueCount ? `, Due ${dueCount}` : ''}</div>
             </div>
             ${f !== 'General' ? `
             <div style="display:flex; flex-direction:column; gap:6px;">
