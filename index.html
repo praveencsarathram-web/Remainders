@@ -482,7 +482,6 @@
   let selectMode = false;
   let selectedIds = new Set();
   let alarmQueue = [];
-  let lastAlarmUndo = null;
   let datetimePickerOpen = false; // true while a native date/time picker is
                                    // likely open — background re-renders get
                                    // suppressed so they don't destroy the
@@ -502,6 +501,7 @@
   let openFolderPicker = null; // "context:id" key of the currently open folder checklist
   let addFolders = ['General'];
   let viewingFolders = false;
+  let viewingSnoozeHistory = false;
   let newFolderError = '';
   let editingFolderName = null;
   let pendingDeleteFolderName = null;
@@ -703,12 +703,7 @@
     });
   }
 
-  let undoStack = [];
-  const UNDO_MAX = 20;
-  function snapshotState() {
-    return { reminders: JSON.parse(JSON.stringify(reminders)), folders: folders.slice() };
-  }
-  function persistOnly() {
+  function save() {
     pruneAlarmQueue();
     saveLocal();
     if (accessToken) {
@@ -717,26 +712,6 @@
       pushRetryAttempt = 0;
       pushTimer = setTimeout(pushToDrive, 800);
     }
-  }
-  function save() {
-    undoStack.push(snapshotState());
-    if (undoStack.length > UNDO_MAX + 1) undoStack.shift();
-    persistOnly();
-  }
-  function performUndo() {
-    if (undoStack.length <= 1) return;
-    undoStack.pop();
-    const prev = undoStack[undoStack.length - 1];
-    reminders = JSON.parse(JSON.stringify(prev.reminders));
-    folders = prev.folders.slice();
-    alarmQueue = alarmQueue.filter(id => {
-      const r = reminders.find(r => r.id === id);
-      return r && !r.trashed;
-    });
-    if (lockedAlarmId && !reminders.some(r => r.id === lockedAlarmId)) lockedAlarmId = null;
-    if (editingId && !reminders.some(r => r.id === editingId)) { editingId = null; editAnchorTime = null; liveEditTitle = null; liveEditTime = null; liveEditPriority = null; }
-    persistOnly();
-    render();
   }
 
   /* =========================================================
@@ -1065,12 +1040,18 @@
     showAddPopup = false;
     addReminder(title, when, priority, folderList);
   }
+  let snoozeHistory = []; // in-memory only; resets on reload, same as Undo
+  function logSnooze(id, title, newWhenISO) {
+    snoozeHistory.unshift({ id, title, when: newWhenISO, at: Date.now() });
+    if (snoozeHistory.length > 20) snoozeHistory.length = 20;
+  }
   function quickSnooze(id, minutes) {
     const r = reminders.find(r => r.id === id);
     if (!r) return;
     r.when = new Date(Date.now() + minutes * 60000).toISOString();
     r.suppressedUntil = null;
     r.updated = Date.now(); r.version = (r.version || 1) + 1;
+    logSnooze(r.id, r.title, r.when);
     save();
     render();
   }
@@ -1080,6 +1061,7 @@
     r.when = nextOccurrenceISO(hour);
     r.suppressedUntil = null;
     r.updated = Date.now(); r.version = (r.version || 1) + 1;
+    logSnooze(r.id, r.title, r.when);
     save();
     render();
   }
@@ -1164,7 +1146,7 @@
   function toggleViewFolders() {
     viewingFolders = !viewingFolders;
     desktopNav = viewingFolders ? 'folders' : 'dashboard';
-    if (viewingFolders) { showSettings = false; selectMode = false; viewingTrash = false; }
+    if (viewingFolders) { showSettings = false; selectMode = false; viewingTrash = false; viewingSnoozeHistory = false; }
     newFolderError = '';
     editingFolderName = null;
     render();
@@ -1380,12 +1362,12 @@
   }
   function applyBulkSnooze(minutes) {
     const target = new Date(Date.now() + minutes * 60000).toISOString();
-    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); r.version = (r.version || 1) + 1; } });
+    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); r.version = (r.version || 1) + 1; logSnooze(r.id, r.title, r.when); } });
     save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkFolders = []; bulkBarExpanded = false; render();
   }
   function applyBulkSnoozeAbsolute(hour) {
     const target = nextOccurrenceISO(hour);
-    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); r.version = (r.version || 1) + 1; } });
+    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); r.version = (r.version || 1) + 1; logSnooze(r.id, r.title, r.when); } });
     save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkFolders = []; bulkBarExpanded = false; render();
   }
   function applyBulkTime(iso) {
@@ -1463,9 +1445,15 @@
   function toggleViewTrash() {
     viewingTrash = !viewingTrash;
     desktopNav = viewingTrash ? 'trash' : 'dashboard';
-    if (viewingTrash) { showSettings = false; selectMode = false; viewingFolders = false; }
+    if (viewingTrash) { showSettings = false; selectMode = false; viewingFolders = false; viewingSnoozeHistory = false; }
     trashSelectMode = false;
     trashSelectedIds.clear();
+    render();
+  }
+  function toggleViewSnoozeHistory() {
+    viewingSnoozeHistory = !viewingSnoozeHistory;
+    desktopNav = viewingSnoozeHistory ? 'snoozed' : 'dashboard';
+    if (viewingSnoozeHistory) { showSettings = false; selectMode = false; viewingFolders = false; viewingTrash = false; }
     render();
   }
   function toggleTrashSelectMode() {
@@ -1630,12 +1618,79 @@
       Title: r.title,
       Priority: r.priority || 3,
       Due: r.when ? new Date(r.when).toLocaleString() : 'No time set',
+      Folder: (r.folders && r.folders.length) ? r.folders.join(', ') : 'General',
       Status: r.done ? 'Completed' : 'Active'
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Reminders');
     XLSX.writeFile(wb, 'reminders-export.xlsx');
+  }
+  function importFromExcel(file) {
+    if (!window.XLSX) { alert('Excel support failed to load. Check your connection and try again.'); return; }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, { type: 'array', cellDates: true });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+        let imported = 0;
+        let skipped = 0;
+        rows.forEach(row => {
+          const title = String(row.Title || row.title || '').trim();
+          if (!title) { skipped++; return; }
+
+          let priority = parseInt(row.Priority ?? row.priority, 10);
+          if (!(priority >= 1 && priority <= 5)) priority = 5;
+
+          const rawDue = row.Due ?? row.due;
+          let dueDate = null;
+          if (rawDue instanceof Date && !isNaN(rawDue)) {
+            dueDate = rawDue;
+          } else if (rawDue && String(rawDue).trim()) {
+            const parsed = new Date(String(rawDue).trim());
+            if (!isNaN(parsed)) dueDate = parsed;
+          }
+          // No usable due date/time in the sheet — default to right now,
+          // as agreed, rather than leaving the reminder with no due time.
+          const whenISO = dueDate ? dueDate.toISOString() : new Date().toISOString();
+
+          const rawFolder = String(row.Folder ?? row.folder ?? '').trim();
+          let folderList = rawFolder ? rawFolder.split(',').map(f => f.trim()).filter(Boolean) : ['General'];
+          if (!folderList.length) folderList = ['General'];
+          folderList.forEach(f => {
+            if (!folders.some(existing => existing.toLowerCase() === f.toLowerCase())) folders.push(f);
+          });
+
+          const rawStatus = String(row.Status ?? row.status ?? '').trim().toLowerCase();
+          const done = rawStatus === 'completed';
+
+          reminders.unshift({
+            id: 'r' + Date.now() + Math.random().toString(36).slice(2, 7),
+            title,
+            when: whenISO,
+            priority,
+            done,
+            completedAt: done ? Date.now() : null,
+            suppressedUntil: null,
+            trashed: false,
+            trashedAt: null,
+            folders: folderList,
+            version: 1,
+            created: Date.now(),
+            updated: Date.now()
+          });
+          imported++;
+        });
+        save();
+        render();
+        alert(`Imported ${imported} reminder${imported === 1 ? '' : 's'}.${skipped ? ` Skipped ${skipped} row${skipped === 1 ? '' : 's'} with no title.` : ''}`);
+      } catch (err) {
+        alert('Could not read that Excel file: ' + (err.message || err));
+      }
+    };
+    reader.readAsArrayBuffer(file);
   }
 
   function downloadBackup() {
@@ -1700,6 +1755,25 @@
   function checkDue() {
     const now = Date.now();
 
+    // Checking something off only "sticks" until its due time arrives — the
+    // moment a checked reminder's time is reached (or was already in the
+    // past), it automatically un-checks itself and counts as Due Now again,
+    // regardless of priority. This runs retroactively too: any already-
+    // checked, already-overdue reminder gets un-checked the first time this
+    // runs after the change ships.
+    let anyUnchecked = false;
+    reminders.forEach(r => {
+      if (r.trashed) return;
+      if (r.done && r.when && isDue(r)) {
+        r.done = false;
+        r.completedAt = null;
+        r.updated = Date.now();
+        r.version = (r.version || 1) + 1;
+        anyUnchecked = true;
+      }
+    });
+    if (anyUnchecked) save();
+
     let newlyFired = false;
     let newlyFiredReminders = [];
     reminders.forEach(r => {
@@ -1733,47 +1807,14 @@
     render();
   }
 
-  function snapshotForUndo(id) {
-    const r = reminders.find(r => r.id === id);
-    if (!r) return null;
-    return {
-      id,
-      when: r.when,
-      suppressedUntil: r.suppressedUntil,
-      done: r.done,
-      completedAt: r.completedAt,
-      alarmQueue: alarmQueue.slice(),
-      lockedAlarmId
-    };
-  }
-  function undoLastAlarmAction() {
-    if (!lastAlarmUndo) return;
-    const u = lastAlarmUndo;
-    const r = reminders.find(r => r.id === u.id);
-    if (r) {
-      r.when = u.when;
-      r.suppressedUntil = u.suppressedUntil;
-      r.done = u.done;
-      r.completedAt = u.completedAt;
-      r.updated = Date.now(); r.version = (r.version || 1) + 1;
-      save();
-    }
-    alarmQueue = u.alarmQueue;
-    lockedAlarmId = u.id;
-    lastAlarmUndo = null;
-    render();
-  }
-
   function snoozeCurrent(id, minutes) {
-    lastAlarmUndo = snapshotForUndo(id);
     const r = reminders.find(r => r.id === id);
-    if (r) { r.when = new Date(Date.now() + minutes * 60000).toISOString(); r.suppressedUntil = null; r.updated = Date.now(); r.version = (r.version || 1) + 1; save(); }
+    if (r) { r.when = new Date(Date.now() + minutes * 60000).toISOString(); r.suppressedUntil = null; r.updated = Date.now(); r.version = (r.version || 1) + 1; logSnooze(r.id, r.title, r.when); save(); }
     alarmQueue = alarmQueue.filter(qid => qid !== id); if (lockedAlarmId === id) lockedAlarmId = null; render();
   }
   function snoozeCurrentAbsolute(id, hour) {
-    lastAlarmUndo = snapshotForUndo(id);
     const r = reminders.find(r => r.id === id);
-    if (r) { r.when = nextOccurrenceISO(hour); r.suppressedUntil = null; r.updated = Date.now(); r.version = (r.version || 1) + 1; save(); }
+    if (r) { r.when = nextOccurrenceISO(hour); r.suppressedUntil = null; r.updated = Date.now(); r.version = (r.version || 1) + 1; logSnooze(r.id, r.title, r.when); save(); }
     alarmQueue = alarmQueue.filter(qid => qid !== id); if (lockedAlarmId === id) lockedAlarmId = null; render();
   }
   function dismissCurrent(id) {
@@ -1785,7 +1826,6 @@
     // Checking something off is just a tracking note now — it doesn't stop
     // the alerts. It keeps re-appearing every minute like Dismiss, until
     // you delete it or push its time forward.
-    lastAlarmUndo = snapshotForUndo(id);
     const r = reminders.find(r => r.id === id);
     if (r) {
       r.done = true;
@@ -1892,31 +1932,33 @@
             <span class="count">${totalActiveCount} active</span>
             <button class="pill-btn settings-toggle" id="settings-toggle">${showSettings ? 'Close' : 'Sync'}</button>
             <button class="pill-btn alerts-toggle ${alertsPaused ? 'paused' : ''}" id="alerts-toggle" title="${alertsPaused ? 'Alerts paused — tap to resume' : 'Alerts on — tap to pause'}">${alertsPaused ? '\ud83d\udd15 Paused' : '\ud83d\udd14 Alerts'}</button>
+            <button class="pill-btn trash-toggle ${viewingSnoozeHistory ? 'active' : ''}" id="snooze-history-toggle-btn" title="Snoozed reminders">&#128564; Snoozed${snoozeHistory.length ? ` (${snoozeHistory.length})` : ''}</button>
           </div>
           <div class="header-right-row">
-            ${!viewingTrash && !viewingFolders && visibleCount ? `<button class="search-toggle-btn ${showSearchBar ? 'active' : ''}" id="search-toggle-btn" title="${showSearchBar ? 'Hide search' : 'Search'}">\ud83d\udd0d</button>` : ''}
-            ${!viewingTrash && !viewingFolders && visibleCount ? `<button class="pill-btn select-toggle" id="select-toggle">${selectMode ? 'Cancel' : 'Select'}</button>` : ''}
-            ${!viewingTrash && !viewingFolders && selectMode ? `<button class="pill-btn select-toggle" id="select-all-btn">Select all</button>` : ''}
-            ${!viewingTrash && !viewingFolders && selectMode ? `<button class="pill-btn select-toggle" id="deselect-all-btn">Deselect all</button>` : ''}
+            ${!viewingTrash && !viewingFolders && !viewingSnoozeHistory && visibleCount ? `<button class="search-toggle-btn ${showSearchBar ? 'active' : ''}" id="search-toggle-btn" title="${showSearchBar ? 'Hide search' : 'Search'}">\ud83d\udd0d</button>` : ''}
+            ${!viewingTrash && !viewingFolders && !viewingSnoozeHistory && visibleCount ? `<button class="pill-btn select-toggle" id="select-toggle">${selectMode ? 'Cancel' : 'Select'}</button>` : ''}
+            ${!viewingTrash && !viewingFolders && !viewingSnoozeHistory && selectMode ? `<button class="pill-btn select-toggle" id="select-all-btn">Select all</button>` : ''}
+            ${!viewingTrash && !viewingFolders && !viewingSnoozeHistory && selectMode ? `<button class="pill-btn select-toggle" id="deselect-all-btn">Deselect all</button>` : ''}
             <button class="pill-btn trash-toggle ${viewingTrash ? 'active' : ''}" id="trash-toggle-btn" title="Trash">&#128465; Trash${trashCount ? ` (${trashCount})` : ''}</button>
             <button class="pill-btn trash-toggle ${viewingFolders ? 'active' : ''}" id="folders-toggle-btn" title="Folders">&#128193; Folders</button>
-            ${undoStack.length > 1 ? `<button class="pill-btn trash-toggle" id="undo-btn" title="Undo last action">&#8617; Undo (${undoStack.length - 1})</button>` : ''}
+            <button class="pill-btn trash-toggle" id="import-excel-btn" title="Import reminders from Excel">&#128229; Import</button>
+            <input type="file" id="import-excel-input" accept=".xlsx,.xls" style="position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;" />
           </div>
         </div>
       </div>
-      ${!viewingFolders ? `<p class="subtitle">A quiet place to keep track of what's next.</p>` : ''}
-      ${!viewingFolders ? `<p class="desktop-greeting">${getGreeting()}</p>` : ''}
+      ${!viewingFolders && !viewingSnoozeHistory ? `<p class="subtitle">A quiet place to keep track of what's next.</p>` : ''}
+      ${!viewingFolders && !viewingSnoozeHistory ? `<p class="desktop-greeting">${getGreeting()}</p>` : ''}
 
-      ${!selectMode && !viewingTrash && !viewingFolders ? `
+      ${!selectMode && !viewingTrash && !viewingFolders && !viewingSnoozeHistory ? `
       <button class="add-trigger-btn" id="add-trigger-btn">+ Add reminder</button>` : ''}
 
       
 
-      ${!viewingTrash && !viewingFolders ? renderDashboardStats() : ''}
+      ${!viewingTrash && !viewingFolders && !viewingSnoozeHistory ? renderDashboardStats() : ''}
       ${!viewingFolders ? renderSyncStatus() : ''}
       ${showSettings ? renderSettings() : ''}
 
-      ${viewingTrash ? renderTrashView() : (viewingFolders ? renderFoldersView() : (visibleCount ? `
+      ${viewingTrash ? renderTrashView() : (viewingFolders ? renderFoldersView() : (viewingSnoozeHistory ? renderSnoozeHistoryView() : (visibleCount ? `
       ${showSearchBar ? `
       <div class="search-bar">
         <input type="text" id="search-input" placeholder="Search reminders..." value="${escapeHtml(searchQuery)}" autofocus />
@@ -1939,9 +1981,9 @@
       <div class="sort-row">
         <span class="sort-label">Folder</span>
         ${renderFolderFilterPicker()}
-      </div>` : ''))}
+      </div>` : '')))}
 
-      ${(viewingTrash || viewingFolders) ? '' : (!loaded ? '<div class="empty-state">Loading...</div>' : renderLists(active, done))}
+      ${(viewingTrash || viewingFolders || viewingSnoozeHistory) ? '' : (!loaded ? '<div class="empty-state">Loading...</div>' : renderLists(active, done))}
 
       ${selectMode && selectedIds.size > 0 ? renderBulkBar() : ''}
       ${showAddPopup ? renderAddPopup(savedTitleValue, savedTimeValue) : ''}
@@ -2387,6 +2429,35 @@
       </div>
     `;
   }
+  function renderSnoozeHistoryView() {
+    if (!snoozeHistory.length) {
+      return `<div class="empty-state">No reminders have been snoozed yet this session.</div>`;
+    }
+    return `
+      <div class="trash-header-row">
+        <p class="trash-count-label">Last ${snoozeHistory.length} snoozed reminder${snoozeHistory.length === 1 ? '' : 's'} — newest first</p>
+      </div>
+      <div class="reminder-list">
+        ${snoozeHistory.map(entry => {
+          const r = reminders.find(x => x.id === entry.id);
+          if (!r || r.trashed) {
+            return `
+              <div class="reminder trash-item">
+                <div class="reminder-body">
+                  <p class="reminder-title">${escapeHtml(entry.title)}</p>
+                  <div class="reminder-time">Snoozed ${fmtSyncedTime(entry.at)} &middot; now due ${fmtTime(entry.when)}${r && r.trashed ? ' &middot; now in Trash' : ' &middot; since deleted'}</div>
+                </div>
+              </div>
+            `;
+          }
+          return `
+            <div class="reminder-folders" style="margin:0 0 -4px 2px;">Snoozed ${fmtSyncedTime(entry.at)}</div>
+            ${renderItem(r)}
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
   function renderUncheckConfirm() {
     return `
       <div class="alarm-overlay">
@@ -2564,7 +2635,6 @@
             <button class="snooze-btn" data-snooze-abs="17" data-alarm-id="${displayId}">5 PM</button>
           </div>
           ${alarmQueue.length > 1 ? `<p class="queue-note">${alarmQueue.length - 1} more waiting</p>` : ''}
-          ${lastAlarmUndo ? `<button class="alarm-dismiss-btn" id="alarm-previous-btn" style="margin-top:14px; width:100%; border-color:var(--ember); color:var(--ember);">&#8592; Previous (undo last)</button>` : ''}
           <button class="alarm-dismiss-btn" id="pause-alerts-btn" style="margin-top:14px; width:100%;">Pause all alert popups</button>
         </div>
       </div>
@@ -2595,8 +2665,6 @@
     });
     const pauseAlertsBtn = document.getElementById('pause-alerts-btn');
     if (pauseAlertsBtn) pauseAlertsBtn.addEventListener('click', togglePauseAlerts);
-    const alarmPreviousBtn = document.getElementById('alarm-previous-btn');
-    if (alarmPreviousBtn) alarmPreviousBtn.addEventListener('click', undoLastAlarmAction);
 
     const addTriggerBtn = document.getElementById('add-trigger-btn');
     if (addTriggerBtn) addTriggerBtn.addEventListener('click', () => {
@@ -2654,8 +2722,19 @@
     if (trashToggleBtn) trashToggleBtn.addEventListener('click', toggleViewTrash);
     const foldersToggleBtn = document.getElementById('folders-toggle-btn');
     if (foldersToggleBtn) foldersToggleBtn.addEventListener('click', toggleViewFolders);
-    const undoBtn = document.getElementById('undo-btn');
-    if (undoBtn) undoBtn.addEventListener('click', performUndo);
+    const importExcelBtn = document.getElementById('import-excel-btn');
+    const importExcelInput = document.getElementById('import-excel-input');
+    if (importExcelBtn && importExcelInput) {
+      importExcelBtn.addEventListener('click', () => importExcelInput.click());
+      importExcelInput.addEventListener('change', () => {
+        if (importExcelInput.files && importExcelInput.files[0]) {
+          importFromExcel(importExcelInput.files[0]);
+        }
+        importExcelInput.value = '';
+      });
+    }
+    const snoozeHistoryToggleBtn = document.getElementById('snooze-history-toggle-btn');
+    if (snoozeHistoryToggleBtn) snoozeHistoryToggleBtn.addEventListener('click', toggleViewSnoozeHistory);
     const createFolderBtn = document.getElementById('create-folder-btn');
     const newFolderInput = document.getElementById('new-folder-input');
     if (createFolderBtn && newFolderInput) {
@@ -2798,7 +2877,6 @@
   }, true);
 
   loadLocal();
-  undoStack = [snapshotState()];
   render();
   setInterval(checkDue, 10000);
   checkDue();
