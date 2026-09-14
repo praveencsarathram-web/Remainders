@@ -275,6 +275,13 @@
     font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; color: var(--ink); background: var(--paper);
   }
   .folder-error-note { color: var(--ember); font-size: 12px; margin: -4px 0 10px; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; }
+  .voice-mic-btn {
+    flex-shrink: 0; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line);
+    background: var(--card); color: var(--ink); font-size: 15px; cursor: pointer; display: flex;
+    align-items: center; justify-content: center; padding: 0;
+  }
+  .voice-mic-btn.listening { background: var(--ember); border-color: var(--ember); color: white; animation: voice-pulse 1s ease-in-out infinite; }
+  @keyframes voice-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 
   .priority-label { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 13px; color: var(--muted); margin-right: 4px; }
   .priority-dot { width: 40px; height: 40px; border-radius: 50%; border: 2px solid currentColor; cursor: pointer; padding: 0; position: relative; transition: box-shadow 0.12s ease; }
@@ -512,6 +519,8 @@
   let topToggleOn = false;
   let newFolderError = '';
   let newFolderDraft = '';
+  let voiceListeningFor = null; // id of the input currently being dictated into, or null
+  let speechRecognizer = null;
   let editingFolderName = null;
   let pendingDeleteFolderName = null;
   let showDeleteFolderConfirm = false;
@@ -620,6 +629,42 @@
     const d = document.createElement('div');
     d.textContent = str;
     return d.innerHTML;
+  }
+  function isSpeechSupported() {
+    return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  }
+  function startVoiceInput(targetInputId) {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+    // Tapping the mic again while it's already listening for this same
+    // field stops it early, same as any push-to-talk control.
+    if (voiceListeningFor === targetInputId && speechRecognizer) {
+      speechRecognizer.stop();
+      return;
+    }
+    if (speechRecognizer) { try { speechRecognizer.stop(); } catch (e) {} }
+    const recognizer = new SR();
+    recognizer.lang = 'en-US';
+    recognizer.interimResults = false;
+    recognizer.maxAlternatives = 1;
+    recognizer.onstart = () => { voiceListeningFor = targetInputId; render(); };
+    recognizer.onerror = () => { voiceListeningFor = null; speechRecognizer = null; render(); };
+    recognizer.onend = () => { voiceListeningFor = null; speechRecognizer = null; render(); };
+    recognizer.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      const input = document.getElementById(targetInputId);
+      if (input) {
+        const existing = input.value.trim();
+        input.value = existing ? existing + ' ' + transcript : transcript;
+      }
+    };
+    speechRecognizer = recognizer;
+    try { recognizer.start(); } catch (e) { voiceListeningFor = null; speechRecognizer = null; }
+  }
+  function voiceMicButtonHtml(targetInputId) {
+    if (!isSpeechSupported()) return '';
+    const listening = voiceListeningFor === targetInputId;
+    return `<button type="button" class="voice-mic-btn ${listening ? 'listening' : ''}" data-voice-input-target="${targetInputId}" title="${listening ? 'Listening… tap to stop' : 'Dictate by voice'}">&#127908;</button>`;
   }
   // Priority 1-5 rendered using only teal, blue, and black. Every dot starts
   // white/outline; the fill only appears on whichever priority is currently
@@ -2285,7 +2330,10 @@
       return `
         <div class="reminder p${previewPriority}">
           <div class="reminder-body" style="width:100%;">
-            <input type="text" class="edit-title-input" id="edit-title-${r.id}" value="${escapeHtml(titleVal)}" />
+            <div style="display:flex; gap:6px; align-items:center;">
+              <input type="text" class="edit-title-input" id="edit-title-${r.id}" value="${escapeHtml(titleVal)}" style="flex:1;" />
+              ${voiceMicButtonHtml('edit-title-' + r.id)}
+            </div>
             <input type="datetime-local" class="edit-time-input" id="edit-time-${r.id}" value="${timeVal}" />
             <p class="snooze-label" style="margin:0 0 6px;">Push time forward by</p>
             <div class="snooze-grid">
@@ -2667,7 +2715,10 @@
         <div class="alarm-card">
           <p class="alarm-title" style="font-size:22px; font-weight:700; color:${PRIORITY_META[addPriority]}; margin-bottom:4px;">Priority ${addPriority}</p>
           <p class="alarm-title" style="margin-top:-6px; margin-bottom:14px;">New reminder</p>
-          <input type="text" class="edit-title-input" id="add-popup-title" placeholder="Remind me to..." value="${escapeHtml(titleValue)}" />
+          <div style="display:flex; gap:6px; align-items:center;">
+            <input type="text" class="edit-title-input" id="add-popup-title" placeholder="Remind me to..." value="${escapeHtml(titleValue)}" style="flex:1;" />
+            ${voiceMicButtonHtml('add-popup-title')}
+          </div>
           <p class="snooze-label" style="text-align:center; margin-top:2px;">Folder</p>
           <div style="display:flex; flex-direction:column; align-items:center; margin-bottom:10px;">
             ${renderFolderPicker('add', null, addFolders)}
@@ -2908,6 +2959,7 @@
     if (topPriorityBtn) topPriorityBtn.addEventListener('click', toggleTopButton);
     const createFolderBtn = document.getElementById('create-folder-btn');
     const newFolderInput = document.getElementById('new-folder-input');
+    document.querySelectorAll('[data-voice-input-target]').forEach(el => el.addEventListener('click', () => startVoiceInput(el.dataset.voiceInputTarget)));
     if (createFolderBtn && newFolderInput) {
       createFolderBtn.addEventListener('click', () => { createFolder(newFolderInput.value); });
       newFolderInput.addEventListener('input', () => { newFolderDraft = newFolderInput.value; });
