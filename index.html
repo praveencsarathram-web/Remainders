@@ -2996,11 +2996,11 @@
   render();
   setInterval(checkDue, 10000);
   checkDue();
-  setInterval(pullFromDrive, 30000);
+  setInterval(pullFromDrive, 5000);
 
   // The moment the browser regains a connection (wifi/data reconnects),
   // immediately retry any pending push and pull, instead of waiting for
-  // the next scheduled retry or 30-second pull interval.
+  // the next scheduled retry or pull interval.
   window.addEventListener('online', () => {
     if (!accessToken) return;
     pushRetryAttempt = 0;
