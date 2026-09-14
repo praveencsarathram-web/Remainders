@@ -2168,12 +2168,13 @@
     else if (!accessToken) { label = 'Drive not connected — tap "Sync"'; cls = ''; }
     else if (driveStatus === 'syncing' || driveStatus === 'connecting') { label = 'Syncing with Drive…'; cls = 'on'; }
     else if (driveStatus === 'retrying') { label = 'Waiting to sync — retrying automatically'; cls = ''; }
-    else if (driveStatus === 'synced') { label = allSynced ? '&#9989; All Devices Synced' : 'Synced with Google Drive'; cls = 'on'; }
+    else if (driveStatus === 'synced') { label = ''; cls = 'on'; }
     else if (driveStatus === 'error') { label = 'Drive sync error: ' + escapeHtml(driveError); cls = 'err'; }
     else { label = 'Drive connected'; cls = 'on'; }
-    const lastSyncedText = lastSyncedAt ? ` &middot; Last synced: ${fmtSyncedTime(lastSyncedAt)}` : '';
-    const codeText = ` &middot; Code: ${computeSyncFingerprint()}`;
-    return `<div class="sync-status"><span class="sync-dot ${cls}"></span>${label}${lastSyncedText}${codeText}</div>`;
+    const lastSyncedText = lastSyncedAt ? `Last synced: ${fmtSyncedTime(lastSyncedAt)}` : '';
+    const codeText = `Code: ${computeSyncFingerprint()}`;
+    const parts = [label, lastSyncedText, codeText].filter(Boolean);
+    return `<div class="sync-status"><span class="sync-dot ${cls}"></span>${parts.join(' &middot; ')}</div>`;
   }
 
   function renderSettings() {
