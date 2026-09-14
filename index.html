@@ -511,6 +511,7 @@
   let viewingChangeHistory = false;
   let topToggleOn = false;
   let newFolderError = '';
+  let newFolderDraft = '';
   let editingFolderName = null;
   let pendingDeleteFolderName = null;
   let showDeleteFolderConfirm = false;
@@ -1187,6 +1188,7 @@
     desktopNav = viewingFolders ? 'folders' : 'dashboard';
     if (viewingFolders) { showSettings = false; selectMode = false; viewingTrash = false; viewingChangeHistory = false; }
     newFolderError = '';
+    newFolderDraft = '';
     editingFolderName = null;
     render();
   }
@@ -1197,6 +1199,7 @@
     if (exists) { newFolderError = 'That folder already exists.'; render(); return; }
     folders.push(trimmed);
     newFolderError = '';
+    newFolderDraft = '';
     save();
     render();
   }
@@ -2546,7 +2549,7 @@
         <p class="trash-count-label">${folders.length} folder${folders.length === 1 ? '' : 's'}</p>
       </div>
       <div class="folder-create-row">
-        <input type="text" id="new-folder-input" placeholder="New folder name..." />
+        <input type="text" id="new-folder-input" placeholder="New folder name..." value="${escapeHtml(newFolderDraft)}" />
         <button class="pill-btn select-toggle" id="create-folder-btn">Create</button>
       </div>
       ${newFolderError ? `<p class="folder-error-note">${escapeHtml(newFolderError)}</p>` : ''}
@@ -2907,6 +2910,7 @@
     const newFolderInput = document.getElementById('new-folder-input');
     if (createFolderBtn && newFolderInput) {
       createFolderBtn.addEventListener('click', () => { createFolder(newFolderInput.value); });
+      newFolderInput.addEventListener('input', () => { newFolderDraft = newFolderInput.value; });
       newFolderInput.addEventListener('keydown', e => { if (e.key === 'Enter') createFolder(newFolderInput.value); });
     }
     document.querySelectorAll('[data-delete-folder]').forEach(el => el.addEventListener('click', () => requestDeleteFolder(el.dataset.deleteFolder)));
