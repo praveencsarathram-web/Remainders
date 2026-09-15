@@ -2101,7 +2101,7 @@
             <button class="pill-btn trash-toggle ${viewingTrash ? 'active' : ''}" id="trash-toggle-btn" title="Trash">&#128465; Trash${trashCount ? ` (${trashCount})` : ''}</button>
             <button class="pill-btn trash-toggle ${viewingFolders ? 'active' : ''}" id="folders-toggle-btn" title="Folders">&#128193; Folders</button>
             <button class="pill-btn trash-toggle" id="import-excel-btn" title="Import reminders from Excel">&#128229; Import</button>
-            <button class="pill-btn trash-toggle ${topToggleOn ? 'active' : ''}" id="top-priority-btn" title="Priority folder, Priority 1">TOP</button>
+            <button class="pill-btn trash-toggle ${topToggleOn ? 'active' : ''}" id="top-priority-btn" title="Priority folder, Priority 1">Priority</button>
             <button class="pill-btn trash-toggle ${praveenToggleOn ? 'active' : ''}" id="praveen-folder-toggle-btn" title="Praveen folder">Praveen</button>
             <input type="file" id="import-excel-input" accept=".xlsx,.xls" style="position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;" />
           </div>
@@ -2591,7 +2591,14 @@
   function goToPraveenFolder() {
     praveenToggleOn = true;
     topToggleOn = false;
-    viewFolderReminders('Praveen');
+    viewingFolders = false;
+    viewingTrash = false;
+    viewingChangeHistory = false;
+    desktopNav = 'dashboard';
+    folderFilterSelection = ['Praveen'];
+    priorityFilter = 1;
+    dueStateFilter = null;
+    render();
   }
   function togglePraveenButton() {
     if (praveenToggleOn) {
