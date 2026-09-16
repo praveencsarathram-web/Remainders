@@ -680,7 +680,8 @@
     5: 'var(--ember)'
   };
   function priorityDotHtml(p, checked, extraAttrs) {
-    const color = PRIORITY_META[p];
+    const isRedOne = p === 1 && checked;
+    const color = isRedOne ? '#FF0000' : PRIORITY_META[p];
     const bg = checked ? color : 'transparent';
     const textColor = checked ? '#ffffff' : color;
     return `<button class="priority-dot ${checked ? 'checked' : ''}" style="border-color:${color}; background:${bg}; color:${textColor};" data-p="${p}" ${extraAttrs} title="Priority ${p}"></button>`;
