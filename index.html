@@ -130,6 +130,7 @@
 
   .trash-toggle { color: var(--muted); background: var(--line); }
   .trash-toggle.active { color: white; background: var(--ember); }
+  .priority-header-btn.active { background: #FF0000 !important; }
 
   .trash-header-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin: 4px 0 16px; }
   .trash-count-label { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 13px; color: var(--muted); margin: 0; }
@@ -2115,7 +2116,7 @@
             <button class="pill-btn trash-toggle ${viewingTrash ? 'active' : ''}" id="trash-toggle-btn" title="Trash">&#128465; Trash${trashCount ? ` (${trashCount})` : ''}</button>
             <button class="pill-btn trash-toggle ${viewingFolders ? 'active' : ''}" id="folders-toggle-btn" title="Folders">&#128193; Folders</button>
             <button class="pill-btn trash-toggle" id="import-excel-btn" title="Import reminders from Excel">&#128229; Import</button>
-            <button class="pill-btn trash-toggle ${topToggleOn ? 'active' : ''}" id="top-priority-btn" title="Priority folder, Priority 1">Priority</button>
+            <button class="pill-btn trash-toggle priority-header-btn ${topToggleOn ? 'active' : ''}" id="top-priority-btn" title="Priority folder, Priority 1">Priority</button>
             <button class="pill-btn trash-toggle ${praveenToggleOn ? 'active' : ''}" id="praveen-folder-toggle-btn" title="Praveen folder">Praveen</button>
             <input type="file" id="import-excel-input" accept=".xlsx,.xls" style="position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;" />
           </div>
@@ -2375,7 +2376,7 @@
             </div>
             <p class="snooze-label" style="margin:10px 0 2px;">Folder</p>
             ${renderFolderPicker('edit', r.id, r.folders)}
-            ${renderFolderShortcuts('edit', r.id, r.folders)}
+            ${renderFolderShortcuts('edit', r.id, r.folders, previewPriority === 1)}
             <div class="edit-actions" style="margin-top:10px;">
               <button class="edit-save-btn" data-save-edit="${r.id}">Save</button>
               <button class="edit-cancel-btn" data-cancel-edit="${r.id}">Cancel</button>
@@ -2399,7 +2400,7 @@
           <div class="quick-folder-row">
             <span class="priority-label">Folder</span>
             ${renderFolderPicker('edit', r.id, r.folders)}
-            ${renderFolderShortcuts('edit', r.id, r.folders)}
+            ${renderFolderShortcuts('edit', r.id, r.folders, priority === 1)}
           </div>`}
           ${!selectMode ? `
           <div class="priority-row">
@@ -2763,7 +2764,7 @@
           <p class="snooze-label" style="text-align:center; margin-top:2px;">Folder</p>
           <div style="display:flex; flex-direction:column; align-items:center; margin-bottom:10px;">
             ${renderFolderPicker('add', null, addFolders)}
-            ${renderFolderShortcuts('add', null, addFolders)}
+            ${renderFolderShortcuts('add', null, addFolders, addPriority === 1)}
           </div>
           <input type="datetime-local" class="edit-time-input" id="add-popup-time" value="${timeValue}" />
           <p class="snooze-label" style="margin-top:10px;">Push time forward by</p>
@@ -2843,7 +2844,7 @@
             <p class="snooze-label" style="text-align:center;">Folder</p>
             <div style="display:flex; flex-direction:column; align-items:center;">
               ${renderFolderPicker('alarmedit', r.id, r.folders)}
-              ${renderFolderShortcuts('alarmedit', r.id, r.folders)}
+              ${renderFolderShortcuts('alarmedit', r.id, r.folders, alarmEditPriority === 1)}
             </div>
             <div class="alarm-actions" style="margin-top:18px;">
               <button class="alarm-done-btn" id="alarm-edit-save" style="background:var(--ember);">Save</button>
