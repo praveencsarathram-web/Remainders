@@ -1142,6 +1142,16 @@
     save();
     render();
   }
+  function quickSnoozeTomorrow(id) {
+    const r = reminders.find(r => r.id === id);
+    if (!r) return;
+    const base = r.when ? new Date(r.when) : new Date();
+    r.when = new Date(base.getTime() + 24 * 60 * 60000).toISOString();
+    r.suppressedUntil = null;
+    r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title);
+    save();
+    render();
+  }
   function quickSnoozeAbsolute(id, hour) {
     const r = reminders.find(r => r.id === id);
     if (!r) return;
@@ -1384,14 +1394,18 @@
     }
     render();
   }
-  function renderFolderShortcuts(context, id, currentFolders) {
+  function renderFolderShortcuts(context, id, currentFolders, redPriorityPill) {
     const selected = (currentFolders && currentFolders.length) ? currentFolders : ['General'];
     const shortcutNames = ['Priority', 'Praveen'];
     return `
       <div class="folder-shortcut-row">
-        ${shortcutNames.map(name => `
-          <button type="button" class="folder-shortcut-pill ${selected.includes(name) ? 'active' : ''}" data-folder-shortcut-toggle-context="${context}" data-folder-shortcut-toggle-id="${id || ''}" data-folder-shortcut-toggle-name="${escapeHtml(name)}">${escapeHtml(name)}</button>
-        `).join('')}
+        ${shortcutNames.map(name => {
+          const isActive = selected.includes(name);
+          const redOverride = (redPriorityPill && name === 'Priority' && isActive) ? ' style="background:#FF0000; border-color:#FF0000; color:#ffffff;"' : '';
+          return `
+          <button type="button" class="folder-shortcut-pill ${isActive ? 'active' : ''}"${redOverride} data-folder-shortcut-toggle-context="${context}" data-folder-shortcut-toggle-id="${id || ''}" data-folder-shortcut-toggle-name="${escapeHtml(name)}">${escapeHtml(name)}</button>
+        `;
+        }).join('')}
       </div>
     `;
   }
@@ -2400,6 +2414,7 @@
             <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="60">1h</button>
             <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="120">2h</button>
             <button class="quick-snooze-btn" data-quick-snooze-abs="${r.id}" data-hour="4">4 AM</button>
+            <button class="quick-snooze-btn" data-quick-snooze-tom="${r.id}">TOM</button>
           </div>` : ''}
         </div>
         ${!selectMode ? `
@@ -2839,11 +2854,12 @@
       `;
     }
 
+    const isP1Alert = priority === 1;
     return `
       <div class="alarm-overlay">
         <div class="alarm-card">
-          <p class="alarm-title" style="font-size:22px; font-weight:700; color:${PRIORITY_META[priority]}; margin-bottom:10px;">Priority ${priority}</p>
-          <p class="alarm-title" style="margin-top:-6px;">${escapeHtml(r.title)}</p>
+          <p class="alarm-title" style="font-size:22px; font-weight:700; color:${isP1Alert ? '#FF0000' : PRIORITY_META[priority]}; margin-bottom:10px;">Priority ${priority}</p>
+          <p class="alarm-title" style="margin-top:-6px; ${isP1Alert ? 'color:#FF0000;' : ''}">${escapeHtml(r.title)}</p>
           <p class="alarm-time">Was due ${fmtTime(r.when)}</p>
           <div class="alarm-actions" style="margin-bottom:14px;">
             <button class="alarm-dismiss-btn" id="alarm-edit" data-alarm-id="${displayId}" style="flex:1;">Edit</button>
@@ -2856,7 +2872,7 @@
           <p class="snooze-label">Folder</p>
           <div style="display:flex; flex-direction:column; align-items:center; margin-bottom:6px;">
             ${renderFolderPicker('alarm', r.id, r.folders)}
-            ${renderFolderShortcuts('alarm', r.id, r.folders)}
+            ${renderFolderShortcuts('alarm', r.id, r.folders, isP1Alert)}
           </div>
           <p class="snooze-label">Snooze for</p>
           <div class="snooze-grid snooze-grid-alarm">
@@ -2899,12 +2915,16 @@
 
     const searchToggleBtn = document.getElementById('search-toggle-btn');
     if (searchToggleBtn) searchToggleBtn.addEventListener('click', () => {
-      if (showSearchBar) {
-        deselectAllAndReset();
-      } else {
+      const wasOpen = showSearchBar;
+      deselectAllAndReset(); // always resets filters and closes the bar
+      if (!wasOpen) {
+        // First tap: reset everything, then reopen the (now empty) bar.
         showSearchBar = true;
         render();
       }
+      // Second tap (wasOpen was true): deselectAllAndReset already cleared
+      // the typed text, reset every filter, and closed the bar — nothing
+      // more to do.
     });
     const pauseAlertsBtn = document.getElementById('pause-alerts-btn');
     if (pauseAlertsBtn) pauseAlertsBtn.addEventListener('click', togglePauseAlerts);
@@ -2936,6 +2956,7 @@
     document.querySelectorAll('[data-folder-shortcut-toggle-context]').forEach(el => el.addEventListener('click', () => toggleQuickFolderShortcut(el.dataset.folderShortcutToggleContext, el.dataset.folderShortcutToggleId || null, el.dataset.folderShortcutToggleName)));
     document.querySelectorAll('[data-quick-snooze]').forEach(el => el.addEventListener('click', () => quickSnooze(el.dataset.quickSnooze, parseInt(el.dataset.minutes, 10))));
     document.querySelectorAll('[data-quick-snooze-abs]').forEach(el => el.addEventListener('click', () => quickSnoozeAbsolute(el.dataset.quickSnoozeAbs, parseInt(el.dataset.hour, 10))));
+    document.querySelectorAll('[data-quick-snooze-tom]').forEach(el => el.addEventListener('click', () => quickSnoozeTomorrow(el.dataset.quickSnoozeTom)));
     document.querySelectorAll('[data-edit-priority]').forEach(el => el.addEventListener('click', () => setEditPriority(parseInt(el.dataset.p, 10))));
     document.querySelectorAll('[data-alarm-priority-id]').forEach(el => el.addEventListener('click', () => setPriority(el.dataset.alarmPriorityId, parseInt(el.dataset.p, 10))));
     document.querySelectorAll('[data-edit-id]').forEach(el => el.addEventListener('click', () => startEdit(el.dataset.editId)));
