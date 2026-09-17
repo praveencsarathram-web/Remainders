@@ -235,7 +235,8 @@
 
   .priority-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
   .quick-folder-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
-  .quick-snooze-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .quick-snooze-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .quick-snooze-row .quick-snooze-btn { flex-shrink: 0; }
   .quick-snooze-btn {
     background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 4px 11px;
     font-size: 11.5px; color: var(--ink); cursor: pointer; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
@@ -2431,17 +2432,19 @@
             ${renderFolderShortcuts('edit', r.id, r.folders, priority === 1)}
           </div>`}
           ${!selectMode ? `
+          <div class="quick-snooze-row">
+            <span class="priority-label">Snooze</span>
+            <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="5">5m</button>
+            <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="15">15m</button>
+            <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="60">1h</button>
+            <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="120">2h</button>
+          </div>
           <div class="priority-row">
             <span class="priority-label">Priority</span>
             ${[1,2,3,4,5].map(p => priorityDotHtml(p, priority === p, `data-priority-id="${r.id}"`)).join('')}
           </div>
           <div class="quick-snooze-row">
-            <span class="priority-label">Snooze</span>
-            <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="5">5m</button>
-            <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="15">15m</button>
-            <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="30">30m</button>
-            <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="60">1h</button>
-            <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="120">2h</button>
+            <span class="priority-label">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
             <button class="quick-snooze-btn" data-quick-snooze-abs="${r.id}" data-hour="4">4 AM</button>
             <button class="quick-snooze-btn" data-quick-snooze-tom="${r.id}">TOM</button>
             <button class="quick-snooze-btn" data-quick-snooze-daf="${r.id}">DAF</button>
