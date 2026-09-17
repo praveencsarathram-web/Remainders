@@ -21,7 +21,7 @@
     --ember: #36C1B3;
     --ember-soft: #e0f7f4;
     --gold: #4A67A1;
-    --line: #d6e4e2;
+    --line: #d6e4e2;a
     --muted: rgba(0,0,0,0.55);
     --done-bg: #eef8f7;
     --select: #4A67A1;
@@ -556,6 +556,7 @@
   let liveEditTitle = null;
   let liveEditTime = null;
   let liveEditPriority = null;
+  let liveEditFolders = null;
   let liveBulkTime = null;
   let bulkFolders = [];
   let showAddPopup = false;
@@ -1220,6 +1221,7 @@
     liveEditTitle = null;
     liveEditTime = null;
     liveEditPriority = r ? (r.priority || 3) : 3;
+    liveEditFolders = r ? ((r.folders && r.folders.length) ? r.folders.slice() : ['General']) : ['General'];
     editAnchorTime = (r && r.when) ? r.when : new Date().toISOString();
     render();
   }
@@ -1228,6 +1230,7 @@
     liveEditTitle = null;
     liveEditTime = null;
     liveEditPriority = null;
+    liveEditFolders = null;
     editAnchorTime = null;
     render();
   }
@@ -1242,6 +1245,7 @@
       if (trimmed) r.title = trimmed;
       r.when = whenValue ? new Date(whenValue).toISOString() : null;
       if (liveEditPriority) r.priority = liveEditPriority;
+      if (liveEditFolders) r.folders = liveEditFolders;
       r.suppressedUntil = null;
       r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title);
     }
@@ -1249,6 +1253,7 @@
     liveEditTitle = null;
     liveEditTime = null;
     liveEditPriority = null;
+    liveEditFolders = null;
     editAnchorTime = null;
     save();
     render();
@@ -1377,6 +1382,11 @@
     } else if (context === 'bulk') {
       if (bulkFolders.includes(name)) bulkFolders = bulkFolders.filter(f => f !== name);
       else bulkFolders = bulkFolders.concat([name]);
+    } else if (context === 'editdraft') {
+      // Inline Edit: only touches the draft in memory — the real reminder
+      // isn't changed (and won't disappear from a filtered view) until Save.
+      const cur = liveEditFolders || ['General'];
+      liveEditFolders = cur.includes(name) ? cur.filter(f => f !== name) : cur.concat([name]);
     } else {
       const r = reminders.find(r => r.id === id);
       if (!r) return;
@@ -1395,6 +1405,8 @@
       folderFilterSelection = value;
     } else if (context === 'bulk') {
       bulkFolders = value;
+    } else if (context === 'editdraft') {
+      liveEditFolders = value;
     } else {
       const r = reminders.find(r => r.id === id);
       if (!r) return;
@@ -1409,6 +1421,14 @@
     if (context === 'add') {
       if (addFolders.includes(name)) addFolders = addFolders.filter(f => f !== name);
       else addFolders = addFolders.concat([name]);
+    } else if (context === 'editdraft') {
+      const cur = liveEditFolders || ['General'];
+      if (cur.includes(name)) {
+        liveEditFolders = cur.filter(f => f !== name);
+        if (liveEditFolders.length === 0) liveEditFolders = ['General'];
+      } else {
+        liveEditFolders = cur.concat([name]);
+      }
     } else {
       const r = reminders.find(r => r.id === id);
       if (!r) return;
@@ -1599,7 +1619,7 @@
     });
     alarmQueue = alarmQueue.filter(id => !pendingDeleteIds.has(id));
     if (lockedAlarmId && pendingDeleteIds.has(lockedAlarmId)) lockedAlarmId = null;
-    if (editingId && pendingDeleteIds.has(editingId)) { editingId = null; editAnchorTime = null; liveEditTitle = null; liveEditTime = null; liveEditPriority = null; }
+    if (editingId && pendingDeleteIds.has(editingId)) { editingId = null; editAnchorTime = null; liveEditTitle = null; liveEditTime = null; liveEditPriority = null; liveEditFolders = null; }
     save();
     showDeleteConfirm = false;
     pendingDeleteIds = new Set();
@@ -2404,8 +2424,8 @@
               ${[1,2,3,4,5].map(p => priorityDotHtml(p, liveEditPriority === p, `data-edit-priority="${r.id}"`)).join('')}
             </div>
             <p class="snooze-label" style="margin:10px 0 2px;">Folder</p>
-            ${renderFolderPicker('edit', r.id, r.folders)}
-            ${renderFolderShortcuts('edit', r.id, r.folders, previewPriority === 1)}
+            ${renderFolderPicker('editdraft', r.id, liveEditFolders || r.folders)}
+            ${renderFolderShortcuts('editdraft', r.id, liveEditFolders || r.folders, previewPriority === 1)}
             <div class="edit-actions" style="margin-top:10px;">
               <button class="edit-save-btn" data-save-edit="${r.id}">Save</button>
               <button class="edit-cancel-btn" data-cancel-edit="${r.id}">Cancel</button>
@@ -2854,7 +2874,10 @@
           <div class="alarm-card">
             <p class="alarm-title" style="font-size:22px; font-weight:700; color:${PRIORITY_META[alarmEditPriority]}; margin-bottom:4px;">Priority ${alarmEditPriority}</p>
             <p class="alarm-title" style="margin-top:-6px; margin-bottom:14px;">Edit reminder</p>
-            <input type="text" class="edit-title-input" id="alarm-edit-title" value="${escapeHtml(titleVal)}" />
+            <div style="display:flex; gap:6px; align-items:center;">
+              <input type="text" class="edit-title-input" id="alarm-edit-title" value="${escapeHtml(titleVal)}" style="flex:1;" />
+              ${voiceMicButtonHtml('alarm-edit-title')}
+            </div>
             <input type="datetime-local" class="edit-time-input" id="alarm-edit-time" value="${timeVal}" />
             <p class="snooze-label" style="margin-top:10px;">Push time forward by</p>
             <div class="snooze-grid">
