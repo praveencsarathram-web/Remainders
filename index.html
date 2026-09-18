@@ -21,7 +21,7 @@
     --ember: #36C1B3;
     --ember-soft: #e0f7f4;
     --gold: #4A67A1;
-    --line: #d6e4e2;a
+    --line: #d6e4e2;
     --muted: rgba(0,0,0,0.55);
     --done-bg: #eef8f7;
     --select: #4A67A1;
@@ -634,6 +634,12 @@
     const d = document.createElement('div');
     d.textContent = str;
     return d.innerHTML;
+  }
+  function reminderTitleColor(r) {
+    if ((r.priority || 3) === 1) return '#FF0000';
+    const folderList = (r.folders && r.folders.length) ? r.folders : ['General'];
+    if (folderList.includes('Praveen')) return '#B8860B';
+    return '';
   }
   function isSpeechSupported() {
     return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -2443,7 +2449,7 @@
           : `<div class="check ${r.done ? 'checked' : ''}" data-id="${r.id}">${checkIcon()}</div>`
         }
         <div class="reminder-body">
-          <p class="reminder-title">${escapeHtml(r.title)}</p>
+          <p class="reminder-title" style="${reminderTitleColor(r) ? `color:${reminderTitleColor(r)};` : ''}">${escapeHtml(r.title)}</p>
           <div class="reminder-time">${fmtTime(r.when)}${(!r.done && r.when && !due) ? ' <span class="not-due-tag">&middot; upcoming</span>' : ''}</div>
           ${selectMode ? `<div class="reminder-folders">&#128193; ${((r.folders && r.folders.length) ? r.folders : ['General']).map(f => escapeHtml(f)).join(', ')}</div>` : `
           <div class="quick-folder-row">
@@ -2625,7 +2631,7 @@
           <div class="reminder trash-item">
             ${trashSelectMode ? `<div class="pick-box ${trashSelectedIds.has(r.id) ? 'checked' : ''}" data-trash-pick="${r.id}">${trashSelectedIds.has(r.id) ? checkIcon() : ''}</div>` : ''}
             <div class="reminder-body">
-              <p class="reminder-title">${escapeHtml(r.title)}</p>
+              <p class="reminder-title" style="${reminderTitleColor(r) ? `color:${reminderTitleColor(r)};` : ''}">${escapeHtml(r.title)}</p>
               <div class="reminder-time">Deleted ${fmtSyncedTime(r.trashedAt)}${r.when ? ' · was due ' + fmtTime(r.when) : ''}</div>
             </div>
             ${!trashSelectMode ? `
@@ -2916,7 +2922,7 @@
       <div class="alarm-overlay">
         <div class="alarm-card">
           <p class="alarm-title" style="font-size:22px; font-weight:700; color:${isP1Alert ? '#FF0000' : PRIORITY_META[priority]}; margin-bottom:10px;">Priority ${priority}</p>
-          <p class="alarm-title" style="margin-top:-6px; ${isP1Alert ? 'color:#FF0000;' : ''}">${escapeHtml(r.title)}</p>
+          <p class="alarm-title" style="margin-top:-6px; ${reminderTitleColor(r) ? `color:${reminderTitleColor(r)};` : ''}">${escapeHtml(r.title)}</p>
           <p class="alarm-time">Was due ${fmtTime(r.when)}</p>
           <div class="alarm-actions" style="margin-bottom:14px;">
             <button class="alarm-dismiss-btn" id="alarm-edit" data-alarm-id="${displayId}" style="flex:1;">Edit</button>
