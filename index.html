@@ -1989,11 +1989,24 @@
         newlyFiredReminders.push(r);
       }
     });
+    // Popup order for due Priority 1/2 reminders:
+    //   1) Priority folder + Priority 1
+    //   2) Other Priority 1 reminders
+    //   3) Priority folder + Priority 2
+    //   4) Other Priority 2 reminders
+    // Within each group, show the oldest due reminder first.
+    const popupRank = r => {
+      const folders = (r.folders && r.folders.length) ? r.folders : ['General'];
+      const isPriorityFolder = folders.includes('Priority');
+      if (r.priority === 1) return isPriorityFolder ? 1 : 2;
+      if (r.priority === 2) return isPriorityFolder ? 3 : 4;
+      return 5;
+    };
     alarmQueue.sort((idA, idB) => {
       const a = reminders.find(r => r.id === idA);
       const b = reminders.find(r => r.id === idB);
       if (!a || !b) return 0;
-      return (a.priority - b.priority) || (new Date(a.when) - new Date(b.when));
+      return (popupRank(a) - popupRank(b)) || (new Date(a.when) - new Date(b.when));
     });
     if (newlyFired) {
       beep();
