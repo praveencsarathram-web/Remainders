@@ -647,7 +647,7 @@
     const folderList = (r.folders && r.folders.length) ? r.folders : ['General'];
     const isWork = folderList.includes('Work');
     let style = color ? `color:${color};` : '';
-    if (isWork) style += `background:#FFE600;${color ? '' : ' color:#000000;'} padding:1px 6px; border-radius:4px; display:inline; box-decoration-break:clone; -webkit-box-decoration-break:clone;`;
+    if (isWork) style = `background:#36C1B3; color:#000000; padding:1px 6px; border-radius:4px; display:inline; box-decoration-break:clone; -webkit-box-decoration-break:clone;`;
     return style;
   }
   function isSpeechSupported() {
