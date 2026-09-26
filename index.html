@@ -521,6 +521,7 @@
   let viewingChangeHistory = false;
   let topToggleOn = false;
   let praveenToggleOn = false;
+  let workToggleOn = false;
   let newFolderError = '';
   let newFolderDraft = '';
   let voiceListeningFor = null; // id of the input currently being dictated into, or null
@@ -637,9 +638,17 @@
   }
   function reminderTitleColor(r) {
     if ((r.priority || 3) === 1) return '#FF0000';
-    const folderList = (r.folders && r.folders.length) ? r.folders : ['General'];
-    if (folderList.includes('Praveen')) return '#B8860B';
     return '';
+  }
+  // Work reminders get a bright yellow highlighter behind the title (text
+  // stays dark — or red for Priority 1 — so it's always easy to read).
+  function reminderTitleStyle(r) {
+    const color = reminderTitleColor(r);
+    const folderList = (r.folders && r.folders.length) ? r.folders : ['General'];
+    const isWork = folderList.includes('Work');
+    let style = color ? `color:${color};` : '';
+    if (isWork) style += `background:#FFE600;${color ? '' : ' color:#000000;'} padding:1px 6px; border-radius:4px; display:inline; box-decoration-break:clone; -webkit-box-decoration-break:clone;`;
+    return style;
   }
   function isSpeechSupported() {
     return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -1452,7 +1461,7 @@
   }
   function renderFolderShortcuts(context, id, currentFolders, redPriorityPill) {
     const selected = (currentFolders && currentFolders.length) ? currentFolders : ['General'];
-    const shortcutNames = ['Priority', 'Praveen'];
+    const shortcutNames = ['Priority', 'Praveen', 'Work'];
     return `
       <div class="folder-shortcut-row">
         ${shortcutNames.map(name => {
@@ -1550,6 +1559,7 @@
     selectMode = false;
     topToggleOn = false;
     praveenToggleOn = false;
+    workToggleOn = false;
     render();
   }
   function applyBulkSnooze(minutes) {
@@ -2186,6 +2196,7 @@
             <button class="pill-btn trash-toggle" id="import-excel-btn" title="Import reminders from Excel">&#128229; Import</button>
             <button class="pill-btn trash-toggle priority-header-btn ${topToggleOn ? 'active' : ''}" id="top-priority-btn" title="Priority folder, Priority 1">Priority</button>
             <button class="pill-btn trash-toggle ${praveenToggleOn ? 'active' : ''}" id="praveen-folder-toggle-btn" title="Praveen folder">Praveen</button>
+            <button class="pill-btn trash-toggle ${workToggleOn ? 'active' : ''}" id="work-folder-toggle-btn" title="Work folder — all priorities">Work</button>
             <input type="file" id="import-excel-input" accept=".xlsx,.xls" style="position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;" />
           </div>
         </div>
@@ -2307,6 +2318,7 @@
       <div class="sidebar-logo"><img src="data:image/png;base64,${LOGO_B64}" alt="TLS Solutions" /></div>
       ${navItems.map(item => `<button class="sidebar-nav-btn ${desktopNav === item.key ? 'active' : ''}" data-desktop-nav="${item.key}">${item.label}</button>`).join('')}
       <button class="sidebar-nav-btn ${praveenToggleOn ? 'active' : ''}" id="sidebar-praveen-toggle">Praveen</button>
+      <button class="sidebar-nav-btn ${workToggleOn ? 'active' : ''}" id="sidebar-work-toggle">Work</button>
       <div style="margin-top:auto; padding:14px 6px 0; font-family:'IBM Plex Sans',sans-serif; font-size:11px; color:var(--muted);">
         Due today: ${dueTodayCount} · Upcoming: ${upcomingCount} · Checked: ${checkedCount}
       </div>
@@ -2462,7 +2474,7 @@
           : `<div class="check ${r.done ? 'checked' : ''}" data-id="${r.id}">${checkIcon()}</div>`
         }
         <div class="reminder-body">
-          <p class="reminder-title" style="${reminderTitleColor(r) ? `color:${reminderTitleColor(r)};` : ''}">${escapeHtml(r.title)}</p>
+          <p class="reminder-title" style="${reminderTitleStyle(r)}">${escapeHtml(r.title)}</p>
           <div class="reminder-time">${fmtTime(r.when)}${(!r.done && r.when && !due) ? ' <span class="not-due-tag">&middot; upcoming</span>' : ''}</div>
           ${selectMode ? `<div class="reminder-folders">&#128193; ${((r.folders && r.folders.length) ? r.folders : ['General']).map(f => escapeHtml(f)).join(', ')}</div>` : `
           <div class="quick-folder-row">
@@ -2644,7 +2656,7 @@
           <div class="reminder trash-item">
             ${trashSelectMode ? `<div class="pick-box ${trashSelectedIds.has(r.id) ? 'checked' : ''}" data-trash-pick="${r.id}">${trashSelectedIds.has(r.id) ? checkIcon() : ''}</div>` : ''}
             <div class="reminder-body">
-              <p class="reminder-title" style="${reminderTitleColor(r) ? `color:${reminderTitleColor(r)};` : ''}">${escapeHtml(r.title)}</p>
+              <p class="reminder-title" style="${reminderTitleStyle(r)}">${escapeHtml(r.title)}</p>
               <div class="reminder-time">Deleted ${fmtSyncedTime(r.trashedAt)}${r.when ? ' · was due ' + fmtTime(r.when) : ''}</div>
             </div>
             ${!trashSelectMode ? `
@@ -2659,6 +2671,7 @@
   function goToTopPriority() {
     topToggleOn = true;
     praveenToggleOn = false;
+    workToggleOn = false;
     viewingFolders = false;
     viewingTrash = false;
     viewingChangeHistory = false;
@@ -2679,6 +2692,7 @@
   function goToPraveenFolder() {
     praveenToggleOn = true;
     topToggleOn = false;
+    workToggleOn = false;
     viewingFolders = false;
     viewingTrash = false;
     viewingChangeHistory = false;
@@ -2694,6 +2708,27 @@
       deselectAllAndReset();
     } else {
       goToPraveenFolder();
+    }
+  }
+  function goToWorkFolder() {
+    workToggleOn = true;
+    topToggleOn = false;
+    praveenToggleOn = false;
+    viewingFolders = false;
+    viewingTrash = false;
+    viewingChangeHistory = false;
+    desktopNav = 'dashboard';
+    folderFilterSelection = ['Work'];
+    priorityFilter = null; // Work shows every priority
+    dueStateFilter = null;
+    render();
+  }
+  function toggleWorkButton() {
+    if (workToggleOn) {
+      workToggleOn = false;
+      deselectAllAndReset();
+    } else {
+      goToWorkFolder();
     }
   }
   function viewFolderReminders(name) {
@@ -2935,7 +2970,7 @@
       <div class="alarm-overlay">
         <div class="alarm-card">
           <p class="alarm-title" style="font-size:22px; font-weight:700; color:${isP1Alert ? '#FF0000' : PRIORITY_META[priority]}; margin-bottom:10px;">Priority ${priority}</p>
-          <p class="alarm-title" style="margin-top:-6px; ${reminderTitleColor(r) ? `color:${reminderTitleColor(r)};` : ''}">${escapeHtml(r.title)}</p>
+          <p class="alarm-title" style="margin-top:-6px; ${reminderTitleStyle(r)}">${escapeHtml(r.title)}</p>
           <p class="alarm-time">Was due ${fmtTime(r.when)}</p>
           <div class="alarm-actions" style="margin-bottom:14px;">
             <button class="alarm-dismiss-btn" id="alarm-edit" data-alarm-id="${displayId}" style="flex:1;">Edit</button>
@@ -3087,6 +3122,10 @@
     if (praveenFolderToggleBtn) praveenFolderToggleBtn.addEventListener('click', togglePraveenButton);
     const sidebarPraveenToggle = document.getElementById('sidebar-praveen-toggle');
     if (sidebarPraveenToggle) sidebarPraveenToggle.addEventListener('click', togglePraveenButton);
+    const workFolderToggleBtn = document.getElementById('work-folder-toggle-btn');
+    if (workFolderToggleBtn) workFolderToggleBtn.addEventListener('click', toggleWorkButton);
+    const sidebarWorkToggle = document.getElementById('sidebar-work-toggle');
+    if (sidebarWorkToggle) sidebarWorkToggle.addEventListener('click', toggleWorkButton);
     const createFolderBtn = document.getElementById('create-folder-btn');
     const newFolderInput = document.getElementById('new-folder-input');
     document.querySelectorAll('[data-voice-input-target]').forEach(el => el.addEventListener('click', () => startVoiceInput(el.dataset.voiceInputTarget)));
