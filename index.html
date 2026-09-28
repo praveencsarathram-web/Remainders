@@ -522,6 +522,7 @@
   let topToggleOn = false;
   let praveenToggleOn = false;
   let workToggleOn = false;
+  let pBothToggleOn = false; // "P" button: must be in BOTH Praveen AND Priority folders
   let newFolderError = '';
   let newFolderDraft = '';
   let voiceListeningFor = null; // id of the input currently being dictated into, or null
@@ -1560,6 +1561,7 @@
     topToggleOn = false;
     praveenToggleOn = false;
     workToggleOn = false;
+    pBothToggleOn = false;
     render();
   }
   function applyBulkSnooze(minutes) {
@@ -1797,6 +1799,10 @@
       const now = new Date();
       const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
       if (!sameDay) return false;
+    }
+    if (pBothToggleOn) {
+      const bothFolders = (r.folders && r.folders.length) ? r.folders : ['General'];
+      if (!(bothFolders.includes('Praveen') && bothFolders.includes('Priority'))) return false;
     }
     if (folderFilterSelection.length) {
       const rFolders = (r.folders && r.folders.length) ? r.folders : ['General'];
@@ -2197,6 +2203,7 @@
             <button class="pill-btn trash-toggle priority-header-btn ${topToggleOn ? 'active' : ''}" id="top-priority-btn" title="Priority folder, Priority 1">Priority</button>
             <button class="pill-btn trash-toggle ${praveenToggleOn ? 'active' : ''}" id="praveen-folder-toggle-btn" title="Praveen folder">Praveen</button>
             <button class="pill-btn trash-toggle ${workToggleOn ? 'active' : ''}" id="work-folder-toggle-btn" title="Work folder — all priorities">Work</button>
+            <button class="search-toggle-btn ${pBothToggleOn ? 'active' : ''}" id="p-both-toggle-btn" title="In both Praveen AND Priority folders" style="font-weight:700; font-family:'IBM Plex Sans',sans-serif;">P</button>
             <input type="file" id="import-excel-input" accept=".xlsx,.xls" style="position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;" />
           </div>
         </div>
@@ -2669,6 +2676,7 @@
     `;
   }
   function goToTopPriority() {
+    pBothToggleOn = false;
     topToggleOn = true;
     praveenToggleOn = false;
     workToggleOn = false;
@@ -2690,6 +2698,7 @@
     }
   }
   function goToPraveenFolder() {
+    pBothToggleOn = false;
     praveenToggleOn = true;
     topToggleOn = false;
     workToggleOn = false;
@@ -2710,7 +2719,30 @@
       goToPraveenFolder();
     }
   }
+  function goToPBoth() {
+    pBothToggleOn = true;
+    topToggleOn = false;
+    praveenToggleOn = false;
+    workToggleOn = false;
+    viewingFolders = false;
+    viewingTrash = false;
+    viewingChangeHistory = false;
+    desktopNav = 'dashboard';
+    folderFilterSelection = [];
+    priorityFilter = null; // show every priority
+    dueStateFilter = null;
+    render();
+  }
+  function togglePBothButton() {
+    if (pBothToggleOn) {
+      pBothToggleOn = false;
+      deselectAllAndReset();
+    } else {
+      goToPBoth();
+    }
+  }
   function goToWorkFolder() {
+    pBothToggleOn = false;
     workToggleOn = true;
     topToggleOn = false;
     praveenToggleOn = false;
@@ -2732,6 +2764,7 @@
     }
   }
   function viewFolderReminders(name) {
+    pBothToggleOn = false;
     viewingFolders = false;
     viewingTrash = false;
     viewingChangeHistory = false;
@@ -3126,6 +3159,8 @@
     if (workFolderToggleBtn) workFolderToggleBtn.addEventListener('click', toggleWorkButton);
     const sidebarWorkToggle = document.getElementById('sidebar-work-toggle');
     if (sidebarWorkToggle) sidebarWorkToggle.addEventListener('click', toggleWorkButton);
+    const pBothToggleBtn = document.getElementById('p-both-toggle-btn');
+    if (pBothToggleBtn) pBothToggleBtn.addEventListener('click', togglePBothButton);
     const createFolderBtn = document.getElementById('create-folder-btn');
     const newFolderInput = document.getElementById('new-folder-input');
     document.querySelectorAll('[data-voice-input-target]').forEach(el => el.addEventListener('click', () => startVoiceInput(el.dataset.voiceInputTarget)));
