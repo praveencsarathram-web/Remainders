@@ -2127,6 +2127,12 @@
     // Skip this rebuild entirely; a render will run again once it closes.
     if (datetimePickerOpen) return;
 
+    // Remember how far the open folder list is scrolled, so the rebuild
+    // below doesn't snap it back to the top on every tick.
+    const folderListBefore = document.querySelector('.folder-picker-list');
+    const savedFolderScroll = folderListBefore ? folderListBefore.scrollTop : 0;
+    const savedFolderPickerKey = folderListBefore ? openFolderPicker : null;
+
     const titleField = document.getElementById('add-popup-title');
     const wasFocused = document.activeElement === titleField;
     const savedTitleValue = titleField ? titleField.value : '';
@@ -2262,6 +2268,11 @@
     if (sidebarEl) sidebarEl.innerHTML = renderSidebar();
 
     wireEvents();
+
+    if (savedFolderPickerKey !== null && openFolderPicker === savedFolderPickerKey) {
+      const folderListAfter = document.querySelector('.folder-picker-list');
+      if (folderListAfter) folderListAfter.scrollTop = savedFolderScroll;
+    }
 
     if (wasFocused) {
       const el = document.getElementById('add-popup-title');
