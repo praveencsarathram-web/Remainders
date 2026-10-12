@@ -649,6 +649,10 @@
     const folderList = (r.folders && r.folders.length) ? r.folders : ['General'];
     const isPraveen = folderList.includes('Praveen');
     let style = color ? `color:${color};` : '';
+    const isBPlus = folderList.includes('B+');
+    const hl = 'padding:1px 6px; border-radius:4px; display:inline; box-decoration-break:clone; -webkit-box-decoration-break:clone;';
+    // B+ = blue highlight with light text (Priority 1 stays reddish so it still stands out).
+    if (isBPlus) return `background:#4A67A1; color:${color ? '#FFC9C9' : '#ffffff'}; ${hl}`;
     if (isPraveen) style = `background:#FFE600; color:${color || "#000000"}; padding:1px 6px; border-radius:4px; display:inline; box-decoration-break:clone; -webkit-box-decoration-break:clone;`;
     return style;
   }
@@ -1486,13 +1490,14 @@
   }
   function renderFolderShortcuts(context, id, currentFolders, redPriorityPill) {
     const selected = (currentFolders && currentFolders.length) ? currentFolders : ['General'];
-    const shortcutNames = ['Priority', 'Praveen'];
+    const shortcutNames = ['Priority', 'Praveen', 'B+'];
     return `
       <div class="folder-shortcut-row">
         ${shortcutNames.map(name => {
           const isActive = selected.includes(name);
           let redOverride = (redPriorityPill && name === 'Priority' && isActive) ? ' style="background:#FF0000; border-color:#FF0000; color:#ffffff;"' : '';
           if (name === 'Praveen' && isActive) redOverride = ' style="background:#FFE600; border-color:#FFE600; color:#000000;"';
+          if (name === 'B+' && isActive) redOverride = ' style="background:#4A67A1; border-color:#4A67A1; color:#ffffff;"';
           return `
           <button type="button" class="folder-shortcut-pill ${isActive ? 'active' : ''}"${redOverride} data-folder-shortcut-toggle-context="${context}" data-folder-shortcut-toggle-id="${id || ''}" data-folder-shortcut-toggle-name="${escapeHtml(name)}">${escapeHtml(name)}</button>
         `;
@@ -2042,28 +2047,20 @@
       if (r.suppressedUntil === r.when) return;
       // Checked off after it became due → it's handled; don't pop it up.
       if (r.done && (r.completedAt || 0) >= due) return;
-      // Only Priority 1 and Priority 2 reminders interrupt with a popup.
-      // Priority 3/4/5 stay due — visible in Due Now, stats, and the list —
-      // but never trigger the alarm popup.
-      if (r.priority > 2) return;
+      // Every priority (1-5) pops up once due.
       if (!alarmQueue.includes(r.id)) {
         alarmQueue.push(r.id);
         newlyFired = true;
         newlyFiredReminders.push(r);
       }
     });
-    // Popup order for due Priority 1/2 reminders:
-    //   1) Priority folder + Priority 1
-    //   2) Other Priority 1 reminders
-    //   3) Priority folder + Priority 2
-    //   4) Other Priority 2 reminders
     // Within each group, show the oldest due reminder first.
+    // Order: P1 (Priority folder), P1, P2 (Priority folder), P2, … P5.
     const popupRank = r => {
       const folders = (r.folders && r.folders.length) ? r.folders : ['General'];
       const isPriorityFolder = folders.includes('Priority');
-      if (r.priority === 1) return isPriorityFolder ? 1 : 2;
-      if (r.priority === 2) return isPriorityFolder ? 3 : 4;
-      return 5;
+      const p = Math.min(Math.max(r.priority || 3, 1), 5);
+      return (p - 1) * 2 + (isPriorityFolder ? 1 : 2);
     };
     alarmQueue.sort((idA, idB) => {
       const a = reminders.find(r => r.id === idA);
