@@ -290,6 +290,7 @@
 
   .priority-label { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 13px; color: var(--muted); margin-right: 4px; }
   .priority-dot { width: 40px; height: 40px; border-radius: 50%; border: 2px solid currentColor; cursor: pointer; padding: 0; position: relative; transition: box-shadow 0.12s ease; }
+  .priority-dot.priority-dot-2p::before { font-size: 14px; }
   .priority-dot::before {
     content: attr(data-p); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 17px; font-weight: 700; color: currentColor; z-index: 1;
@@ -299,6 +300,7 @@
     .priority-row { gap: 4px; }
     .priority-dot { width: 30px; height: 30px; }
     .priority-dot::before { font-size: 13px; }
+    .priority-dot.priority-dot-2p::before { font-size: 11px; }
     .priority-label { font-size: 11px; margin-right: 1px; }
   }
   .p1 .reminder-title { color: var(--gold); }
@@ -2962,6 +2964,49 @@
     `;
   }
 
+  // Due popup only: priority row with an extra "2P" circle between 1 and 2.
+  // 2P = Priority 2 + Priority folder. It shows as selected when the
+  // reminder is P2 and in the Priority folder; plain 2 then stays empty.
+  function inPriorityFolder(r) {
+    return ((r.folders && r.folders.length) ? r.folders : ['General']).includes('Priority');
+  }
+  function alarmPriorityRowHtml(r) {
+    const priority = r.priority || 3;
+    const is2P = priority === 2 && inPriorityFolder(r);
+    const attrs = `data-alarm-priority-id="${r.id}"`;
+    const color = PRIORITY_META[2];
+    const twoP = `<button class="priority-dot priority-dot-2p ${is2P ? 'checked' : ''}" style="border-color:${color}; border-width:3.5px; background:${is2P ? color : 'transparent'}; color:${is2P ? '#ffffff' : color};" data-p="2P" data-alarm-twop-id="${r.id}" title="Priority 2 + Priority folder"></button>`;
+    return priorityDotHtml(1, priority === 1, attrs)
+      + twoP
+      + priorityDotHtml(2, priority === 2 && !is2P, attrs)
+      + [3,4,5].map(p => priorityDotHtml(p, priority === p, attrs)).join('');
+  }
+  function setAlarm2P(id) {
+    const r = reminders.find(r => r.id === id);
+    if (!r) return;
+    if (!folders.some(f => f.toLowerCase() === 'priority')) folders.push('Priority');
+    const cur = (r.folders && r.folders.length) ? r.folders.slice() : ['General'];
+    if (!cur.includes('Priority')) cur.push('Priority');
+    r.folders = cur;
+    r.priority = 2;
+    r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title);
+    save();
+    render();
+  }
+  function setAlarmPriority(id, p) {
+    const r = reminders.find(r => r.id === id);
+    if (!r) return;
+    // Tapping plain 2 on a 2P reminder takes it out of the Priority folder.
+    if (p === 2 && (r.priority || 3) === 2 && inPriorityFolder(r)) {
+      r.folders = r.folders.filter(f => f !== 'Priority');
+      if (r.folders.length === 0) r.folders = ['General'];
+    }
+    r.priority = p;
+    r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title);
+    save();
+    render();
+  }
+
   function renderAlarm() {
     if (lockedAlarmId && !alarmQueue.includes(lockedAlarmId)) lockedAlarmId = null;
     if (!lockedAlarmId) lockedAlarmId = alarmQueue[0];
@@ -3039,7 +3084,7 @@
           </div>
           <p class="snooze-label">Priority</p>
           <div class="priority-row" style="justify-content:center; margin-top:0 0 16px;">
-            ${[1,2,3,4,5].map(p => priorityDotHtml(p, priority === p, `data-alarm-priority-id="${r.id}"`)).join('')}
+            ${alarmPriorityRowHtml(r)}
           </div>
           <p class="snooze-label">Folder</p>
           <div style="display:flex; flex-direction:column; align-items:center; margin-bottom:6px;">
@@ -3132,7 +3177,8 @@
     document.querySelectorAll('[data-quick-snooze-daf]').forEach(el => el.addEventListener('click', () => quickSnoozeDayAfterTomorrow(el.dataset.quickSnoozeDaf)));
     document.querySelectorAll('[data-quick-snooze-nxw]').forEach(el => el.addEventListener('click', () => quickSnoozeNextSunday(el.dataset.quickSnoozeNxw)));
     document.querySelectorAll('[data-edit-priority]').forEach(el => el.addEventListener('click', () => setEditPriority(parseInt(el.dataset.p, 10))));
-    document.querySelectorAll('[data-alarm-priority-id]').forEach(el => el.addEventListener('click', () => setPriority(el.dataset.alarmPriorityId, parseInt(el.dataset.p, 10))));
+    document.querySelectorAll('[data-alarm-priority-id]').forEach(el => el.addEventListener('click', () => setAlarmPriority(el.dataset.alarmPriorityId, parseInt(el.dataset.p, 10))));
+    document.querySelectorAll('[data-alarm-twop-id]').forEach(el => el.addEventListener('click', () => setAlarm2P(el.dataset.alarmTwopId)));
     document.querySelectorAll('[data-edit-id]').forEach(el => el.addEventListener('click', () => startEdit(el.dataset.editId)));
     document.querySelectorAll('[data-edit-bump]').forEach(el => el.addEventListener('click', () => { bumpEditTime(el.dataset.editBump, parseInt(el.dataset.minutes, 10)); markSnoozeSelected(el); }));
     document.querySelectorAll('[data-edit-bump-abs]').forEach(el => el.addEventListener('click', () => { bumpEditTimeAbsolute(el.dataset.editBumpAbs, parseInt(el.dataset.hour, 10)); markSnoozeSelected(el); }));
