@@ -301,6 +301,10 @@
     .priority-dot { width: 30px; height: 30px; }
     .priority-dot::before { font-size: 13px; }
     .priority-dot.priority-dot-2p::before { font-size: 11px; }
+    /* Reminder cards: six circles (1, 2P, 2-5) on one line at phone width */
+    .card-priority-row { gap: 3px; flex-wrap: nowrap; }
+    .card-priority-row .priority-dot { width: 28px; height: 28px; flex: 0 0 28px; }
+    .card-priority-row .priority-dot.priority-dot-2p::before { font-size: 10px; }
     .priority-label { font-size: 11px; margin-right: 1px; }
   }
   .p1 .reminder-title { color: var(--gold); }
@@ -416,6 +420,7 @@
     border: 1.5px solid currentColor;
     cursor: pointer; position: relative; padding: 0;
   }
+  .priority-filter-chip.priority-filter-chip-2p { border-width: 3px; }
   .priority-filter-chip::before {
     content: attr(data-p); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     font-size: 13px; font-weight: 700; color: currentColor;
@@ -706,19 +711,52 @@
     4: 'var(--gold)',
     5: 'var(--ember)'
   };
+  // "2P" = Priority 2 + Priority folder. It sits between 1 and 2 in every
+  // priority row. A reminder counts as 2P when it is priority 2 AND in the
+  // Priority folder; plain 2 then shows empty.
+  const PRIORITY_CHOICES = [1, '2P', 2, 3, 4, 5];
+  function parsePriorityChoice(v) { return v === '2P' ? '2P' : parseInt(v, 10); }
+  function folderListOf(list) { return (list && list.length) ? list : ['General']; }
+  function priorityKey(priority, folderList) {
+    const pr = priority || 3;
+    return (pr === 2 && folderListOf(folderList).includes('Priority')) ? '2P' : pr;
+  }
+  function ensurePriorityFolderExists() {
+    if (!folders.some(f => f.toLowerCase() === 'priority')) folders.push('Priority');
+  }
+  // Works out the new { priority, folders } for a tap on a priority circle.
+  // removeOnPlain2: tapping plain 2 on a 2P item takes it out of the Priority folder.
+  function resolvePriorityChoice(choice, curPriority, curFolders, removeOnPlain2) {
+    let fl = folderListOf(curFolders).slice();
+    if (choice === '2P') {
+      ensurePriorityFolderExists();
+      if (!fl.includes('Priority')) fl.push('Priority');
+      return { priority: 2, folders: fl };
+    }
+    if (choice === 2 && removeOnPlain2 && priorityKey(curPriority, fl) === '2P') {
+      fl = fl.filter(f => f !== 'Priority');
+      if (fl.length === 0) fl = ['General'];
+    }
+    return { priority: choice, folders: fl };
+  }
   function priorityDotHtml(p, checked, extraAttrs) {
+    const is2P = p === '2P';
     const isRedOne = p === 1 && checked;
-    const color = isRedOne ? '#FF0000' : PRIORITY_META[p];
+    const color = isRedOne ? '#FF0000' : PRIORITY_META[is2P ? 2 : p];
     const bg = checked ? color : 'transparent';
     const textColor = checked ? '#ffffff' : color;
-    return `<button class="priority-dot ${checked ? 'checked' : ''}" style="border-color:${color}; background:${bg}; color:${textColor};" data-p="${p}" ${extraAttrs} title="Priority ${p}"></button>`;
+    return `<button class="priority-dot ${is2P ? 'priority-dot-2p' : ''} ${checked ? 'checked' : ''}" style="border-color:${color};${is2P ? ' border-width:3.5px;' : ''} background:${bg}; color:${textColor};" data-p="${p}" ${extraAttrs} title="${is2P ? 'Priority 2 + Priority folder' : 'Priority ' + p}"></button>`;
+  }
+  function priorityRowHtml(selectedKey, attrsFor) {
+    return PRIORITY_CHOICES.map(p => priorityDotHtml(p, selectedKey === p, attrsFor(p))).join('');
   }
   function priorityFilterChipHtml(p, active) {
+    const is2P = p === '2P';
     const isRedOne = p === 1 && active;
-    const color = isRedOne ? '#FF0000' : PRIORITY_META[p];
+    const color = isRedOne ? '#FF0000' : PRIORITY_META[is2P ? 2 : p];
     const bg = active ? color : 'transparent';
     const textColor = active ? '#ffffff' : color;
-    return `<button class="priority-filter-chip ${active ? 'active' : ''}" style="border-color:${color}; background:${bg}; color:${textColor};" data-p="${p}" data-filter-priority="${p}" title="Filter to priority ${p}"></button>`;
+    return `<button class="priority-filter-chip ${is2P ? 'priority-filter-chip-2p' : ''} ${active ? 'active' : ''}" style="border-color:${color}; background:${bg}; color:${textColor};" data-p="${p}" data-filter-priority="${p}" title="${is2P ? 'Filter to Priority 2 in the Priority folder' : 'Filter to priority ' + p}"></button>`;
   }
   function isDue(r) {
     if (!r.when) return false;
@@ -1131,7 +1169,8 @@
     render();
   }
   function setAddPriority(p) {
-    addPriority = p;
+    const res = resolvePriorityChoice(p, addPriority, addFolders, true);
+    addPriority = res.priority; addFolders = res.folders;
     render();
   }
   function markSnoozeSelected(btn) {
@@ -1236,7 +1275,7 @@
   }
   function requestPriorityChange(id, priority) {
     const r = reminders.find(r => r.id === id);
-    if (!r || r.priority === priority) return;
+    if (!r || priorityKey(r.priority, r.folders) === priority) return;
     pendingPriorityChange = { id, priority };
     render();
   }
@@ -1244,7 +1283,7 @@
     if (!pendingPriorityChange) return;
     const { id, priority } = pendingPriorityChange;
     pendingPriorityChange = null;
-    setPriority(id, priority);
+    setAlarmPriority(id, priority);
   }
   function cancelPriorityChange() {
     pendingPriorityChange = null;
@@ -1270,7 +1309,8 @@
     render();
   }
   function setEditPriority(p) {
-    liveEditPriority = p;
+    const res = resolvePriorityChoice(p, liveEditPriority, liveEditFolders, true);
+    liveEditPriority = res.priority; liveEditFolders = res.folders;
     render();
   }
   function saveEdit(id, title, whenValue) {
@@ -1618,7 +1658,9 @@
     save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkFolders = []; openFolderPicker = null; bulkBarExpanded = false; render();
   }
   function applyBulkPriority(p) {
-    reminders.forEach(r => { if (selectedIds.has(r.id)) { r.priority = p; r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title); } });
+    // Bulk: 2P sets priority 2 and adds the Priority folder; plain 2 only
+    // changes the priority and never removes folders.
+    reminders.forEach(r => { if (selectedIds.has(r.id)) { const res = resolvePriorityChoice(p, r.priority, r.folders, false); r.priority = res.priority; r.folders = res.folders; r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title); } });
     save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkFolders = []; bulkBarExpanded = false; render();
   }
   function requestBulkPriority(p) {
@@ -1780,7 +1822,8 @@
     render();
   }
   function setAlarmEditPriority(p) {
-    alarmEditPriority = p;
+    const res = resolvePriorityChoice(p, alarmEditPriority, alarmEditFolders, true);
+    alarmEditPriority = res.priority; alarmEditFolders = res.folders;
     render();
   }
   function bumpAlarmEditTime(minutes) {
@@ -1831,7 +1874,8 @@
   function matchesFilters(r) {
     if (r.trashed) return false;
     if (!matchesSearch(r)) return false;
-    if (priorityFilter !== null && r.priority !== priorityFilter) return false;
+    if (priorityFilter === '2P') { if (priorityKey(r.priority, r.folders) !== '2P') return false; }
+    else if (priorityFilter !== null && r.priority !== priorityFilter) return false;
     if (dateFilterMode === 'today' && r.when) {
       const d = new Date(r.when);
       const now = new Date();
@@ -2272,7 +2316,7 @@
       </div>` : ''}
       <div class="priority-filter">
         <span class="priority-filter-label">Search with priority</span>
-        ${[1,2,3,4,5].map(p => priorityFilterChipHtml(p, priorityFilter === p)).join('')}
+        ${PRIORITY_CHOICES.map(p => priorityFilterChipHtml(p, priorityFilter === p)).join('')}
       </div>
       <div class="sort-row">
         <span class="sort-label">Sort by</span>
@@ -2514,7 +2558,7 @@
             <p class="snooze-label" style="margin:10px 0 2px;">Priority</p>
             <p class="alarm-title" style="font-size:17px; font-weight:700; color:${PRIORITY_META[previewPriority]}; margin:0 0 6px;">Priority ${previewPriority}</p>
             <div class="priority-row" style="margin-top:0;">
-              ${[1,2,3,4,5].map(p => priorityDotHtml(p, liveEditPriority === p, `data-edit-priority="${r.id}"`)).join('')}
+              ${priorityRowHtml(priorityKey(liveEditPriority, liveEditFolders || r.folders), () => `data-edit-priority="${r.id}"`)}
             </div>
             <p class="snooze-label" style="margin:10px 0 2px;">Folder</p>
             ${renderFolderPicker('editdraft', r.id, liveEditFolders || r.folders)}
@@ -2552,9 +2596,9 @@
             <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="60">1h</button>
             <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="120">2h</button>
           </div>
-          <div class="priority-row">
+          <div class="priority-row card-priority-row">
             <span class="priority-label">Priority</span>
-            ${[1,2,3,4,5].map(p => priorityDotHtml(p, priority === p, `data-priority-id="${r.id}"`)).join('')}
+            ${priorityRowHtml(priorityKey(r.priority, r.folders), () => `data-priority-id="${r.id}"`)}
           </div>
           <div class="quick-snooze-row">
             <span class="priority-label">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
@@ -2600,7 +2644,7 @@
         </div>
         <p class="snooze-label" style="margin:0;">Set priority to</p>
         <div class="priority-row" style="margin-top:0;">
-          ${[1,2,3,4,5].map(p => priorityDotHtml(p, false, `data-bulk-priority="${p}"`)).join('')}
+          ${priorityRowHtml(null, p => `data-bulk-priority="${p}"`)}
         </div>
         <p class="snooze-label" style="margin:10px 0 0;">Set folder to</p>
         <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
@@ -2953,7 +2997,7 @@
           </div>
           <p class="snooze-label">Priority</p>
           <div class="priority-row" style="justify-content:center; margin-top:0;">
-            ${[1,2,3,4,5].map(p => priorityDotHtml(p, addPriority === p, `data-add-priority="${p}"`)).join('')}
+            ${priorityRowHtml(priorityKey(addPriority, addFolders), p => `data-add-priority="${p}"`)}
           </div>
           <div class="alarm-actions" style="margin-top:18px;">
             <button class="alarm-done-btn" id="add-submit-btn" style="background:var(--ember);">Add reminder</button>
@@ -2964,44 +3008,11 @@
     `;
   }
 
-  // Due popup only: priority row with an extra "2P" circle between 1 and 2.
-  // 2P = Priority 2 + Priority folder. It shows as selected when the
-  // reminder is P2 and in the Priority folder; plain 2 then stays empty.
-  function inPriorityFolder(r) {
-    return ((r.folders && r.folders.length) ? r.folders : ['General']).includes('Priority');
-  }
-  function alarmPriorityRowHtml(r) {
-    const priority = r.priority || 3;
-    const is2P = priority === 2 && inPriorityFolder(r);
-    const attrs = `data-alarm-priority-id="${r.id}"`;
-    const color = PRIORITY_META[2];
-    const twoP = `<button class="priority-dot priority-dot-2p ${is2P ? 'checked' : ''}" style="border-color:${color}; border-width:3.5px; background:${is2P ? color : 'transparent'}; color:${is2P ? '#ffffff' : color};" data-p="2P" data-alarm-twop-id="${r.id}" title="Priority 2 + Priority folder"></button>`;
-    return priorityDotHtml(1, priority === 1, attrs)
-      + twoP
-      + priorityDotHtml(2, priority === 2 && !is2P, attrs)
-      + [3,4,5].map(p => priorityDotHtml(p, priority === p, attrs)).join('');
-  }
-  function setAlarm2P(id) {
+  function setAlarmPriority(id, choice) {
     const r = reminders.find(r => r.id === id);
     if (!r) return;
-    if (!folders.some(f => f.toLowerCase() === 'priority')) folders.push('Priority');
-    const cur = (r.folders && r.folders.length) ? r.folders.slice() : ['General'];
-    if (!cur.includes('Priority')) cur.push('Priority');
-    r.folders = cur;
-    r.priority = 2;
-    r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title);
-    save();
-    render();
-  }
-  function setAlarmPriority(id, p) {
-    const r = reminders.find(r => r.id === id);
-    if (!r) return;
-    // Tapping plain 2 on a 2P reminder takes it out of the Priority folder.
-    if (p === 2 && (r.priority || 3) === 2 && inPriorityFolder(r)) {
-      r.folders = r.folders.filter(f => f !== 'Priority');
-      if (r.folders.length === 0) r.folders = ['General'];
-    }
-    r.priority = p;
+    const res = resolvePriorityChoice(choice, r.priority, r.folders, true);
+    r.priority = res.priority; r.folders = res.folders;
     r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title);
     save();
     render();
@@ -3055,7 +3066,7 @@
             </div>
             <p class="snooze-label">Priority</p>
             <div class="priority-row" style="justify-content:center; margin-top:0;">
-              ${[1,2,3,4,5].map(p => priorityDotHtml(p, alarmEditPriority === p, `data-alarm-edit-priority="${p}"`)).join('')}
+              ${priorityRowHtml(priorityKey(alarmEditPriority, alarmEditFolders || r.folders), p => `data-alarm-edit-priority="${p}"`)}
             </div>
             <p class="snooze-label" style="text-align:center;">Folder</p>
             <div style="display:flex; flex-direction:column; align-items:center;">
@@ -3084,7 +3095,7 @@
           </div>
           <p class="snooze-label">Priority</p>
           <div class="priority-row" style="justify-content:center; margin-top:0 0 16px;">
-            ${alarmPriorityRowHtml(r)}
+            ${priorityRowHtml(priorityKey(r.priority, r.folders), () => `data-alarm-priority-id="${r.id}"`)}
           </div>
           <p class="snooze-label">Folder</p>
           <div style="display:flex; flex-direction:column; align-items:center; margin-bottom:6px;">
@@ -3161,11 +3172,11 @@
     if (addPopupTitle) addPopupTitle.addEventListener('keydown', e => { if (e.key === 'Enter') submitAddPopup(); });
     document.querySelectorAll('[data-bump]').forEach(el => el.addEventListener('click', () => { bumpAddTime(parseInt(el.dataset.bump, 10)); markSnoozeSelected(el); }));
     document.querySelectorAll('[data-bump-abs]').forEach(el => el.addEventListener('click', () => { bumpAddTimeAbsolute(parseInt(el.dataset.bumpAbs, 10)); markSnoozeSelected(el); }));
-    document.querySelectorAll('[data-add-priority]').forEach(el => el.addEventListener('click', () => setAddPriority(parseInt(el.dataset.addPriority, 10))));
+    document.querySelectorAll('[data-add-priority]').forEach(el => el.addEventListener('click', () => setAddPriority(parsePriorityChoice(el.dataset.p))));
 
     document.querySelectorAll('.check').forEach(el => el.addEventListener('click', () => toggleDone(el.dataset.id)));
     document.querySelectorAll('[data-pick]').forEach(el => el.addEventListener('click', () => togglePick(el.dataset.pick)));
-    document.querySelectorAll('[data-priority-id]').forEach(el => el.addEventListener('click', () => requestPriorityChange(el.dataset.priorityId, parseInt(el.dataset.p, 10))));
+    document.querySelectorAll('[data-priority-id]').forEach(el => el.addEventListener('click', () => requestPriorityChange(el.dataset.priorityId, parsePriorityChoice(el.dataset.p))));
     document.querySelectorAll('[data-folder-picker-toggle]').forEach(el => el.addEventListener('click', () => toggleFolderPickerOpen(el.dataset.folderPickerToggle)));
     document.querySelectorAll('[data-folder-toggle-context]').forEach(el => el.addEventListener('click', () => toggleFolderForContext(el.dataset.folderToggleContext, el.dataset.folderToggleId || null, el.dataset.folderToggleName)));
     document.querySelectorAll('[data-folder-select-all-context]').forEach(el => el.addEventListener('click', () => setFolderSelectionForContext(el.dataset.folderSelectAllContext, el.dataset.folderSelectAllId || null, 'all')));
@@ -3176,9 +3187,8 @@
     document.querySelectorAll('[data-quick-snooze-tom]').forEach(el => el.addEventListener('click', () => quickSnoozeTomorrow(el.dataset.quickSnoozeTom)));
     document.querySelectorAll('[data-quick-snooze-daf]').forEach(el => el.addEventListener('click', () => quickSnoozeDayAfterTomorrow(el.dataset.quickSnoozeDaf)));
     document.querySelectorAll('[data-quick-snooze-nxw]').forEach(el => el.addEventListener('click', () => quickSnoozeNextSunday(el.dataset.quickSnoozeNxw)));
-    document.querySelectorAll('[data-edit-priority]').forEach(el => el.addEventListener('click', () => setEditPriority(parseInt(el.dataset.p, 10))));
-    document.querySelectorAll('[data-alarm-priority-id]').forEach(el => el.addEventListener('click', () => setAlarmPriority(el.dataset.alarmPriorityId, parseInt(el.dataset.p, 10))));
-    document.querySelectorAll('[data-alarm-twop-id]').forEach(el => el.addEventListener('click', () => setAlarm2P(el.dataset.alarmTwopId)));
+    document.querySelectorAll('[data-edit-priority]').forEach(el => el.addEventListener('click', () => setEditPriority(parsePriorityChoice(el.dataset.p))));
+    document.querySelectorAll('[data-alarm-priority-id]').forEach(el => el.addEventListener('click', () => setAlarmPriority(el.dataset.alarmPriorityId, parsePriorityChoice(el.dataset.p))));
     document.querySelectorAll('[data-edit-id]').forEach(el => el.addEventListener('click', () => startEdit(el.dataset.editId)));
     document.querySelectorAll('[data-edit-bump]').forEach(el => el.addEventListener('click', () => { bumpEditTime(el.dataset.editBump, parseInt(el.dataset.minutes, 10)); markSnoozeSelected(el); }));
     document.querySelectorAll('[data-edit-bump-abs]').forEach(el => el.addEventListener('click', () => { bumpEditTimeAbsolute(el.dataset.editBumpAbs, parseInt(el.dataset.hour, 10)); markSnoozeSelected(el); }));
@@ -3289,7 +3299,7 @@
     document.querySelectorAll('.bulk-chip').forEach(el => el.addEventListener('click', () => applyBulkTime(el.dataset.preset)));
     document.querySelectorAll('[data-bulk-snooze]').forEach(el => el.addEventListener('click', () => applyBulkSnooze(parseInt(el.dataset.bulkSnooze, 10))));
     document.querySelectorAll('[data-bulk-snooze-abs]').forEach(el => el.addEventListener('click', () => applyBulkSnoozeAbsolute(parseInt(el.dataset.bulkSnoozeAbs, 10))));
-    document.querySelectorAll('[data-bulk-priority]').forEach(el => el.addEventListener('click', () => requestBulkPriority(parseInt(el.dataset.bulkPriority, 10))));
+    document.querySelectorAll('[data-bulk-priority]').forEach(el => el.addEventListener('click', () => requestBulkPriority(parsePriorityChoice(el.dataset.p))));
 
     const alarmDelete = document.getElementById('alarm-delete');
     if (alarmDelete) alarmDelete.addEventListener('click', () => deleteFromAlarm(alarmDelete.dataset.alarmId));
@@ -3304,7 +3314,7 @@
     if (alarmEditCancel) alarmEditCancel.addEventListener('click', cancelAlarmEdit);
     document.querySelectorAll('[data-alarm-edit-bump]').forEach(el => el.addEventListener('click', () => { bumpAlarmEditTime(parseInt(el.dataset.alarmEditBump, 10)); markSnoozeSelected(el); }));
     document.querySelectorAll('[data-alarm-edit-bump-abs]').forEach(el => el.addEventListener('click', () => { bumpAlarmEditTimeAbsolute(parseInt(el.dataset.alarmEditBumpAbs, 10)); markSnoozeSelected(el); }));
-    document.querySelectorAll('[data-alarm-edit-priority]').forEach(el => el.addEventListener('click', () => setAlarmEditPriority(parseInt(el.dataset.alarmEditPriority, 10))));
+    document.querySelectorAll('[data-alarm-edit-priority]').forEach(el => el.addEventListener('click', () => setAlarmEditPriority(parsePriorityChoice(el.dataset.p))));
 
     const saveClientIdBtn = document.getElementById('save-client-id');
     if (saveClientIdBtn) saveClientIdBtn.addEventListener('click', () => {
@@ -3348,7 +3358,7 @@
       searchInput.addEventListener('input', () => { searchQuery = searchInput.value; render(); });
     }
     document.querySelectorAll('[data-filter-priority]').forEach(el => {
-      el.addEventListener('click', () => togglePriorityFilter(parseInt(el.dataset.filterPriority, 10)));
+      el.addEventListener('click', () => togglePriorityFilter(parsePriorityChoice(el.dataset.filterPriority)));
     });
     document.querySelectorAll('[data-sort]').forEach(el => {
       el.addEventListener('click', () => { sortMode = el.dataset.sort; render(); });
