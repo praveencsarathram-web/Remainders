@@ -2176,14 +2176,21 @@
     render();
   }
 
+  // Same ranking the due popup uses:
+  // 1 + Priority folder, 1, 2P, 2, 3 + Priority folder, 3, … 5.
+  function listRank(r) {
+    const fl = (r.folders && r.folders.length) ? r.folders : ['General'];
+    const p = Math.min(Math.max(r.priority || 3, 1), 5);
+    return (p - 1) * 2 + (fl.includes('Priority') ? 1 : 2);
+  }
   function sortList(list) {
     const copy = [...list];
     if (sortMode === 'priority') {
-      copy.sort((a, b) => (a.priority - b.priority) || (timeOrInf(a) - timeOrInf(b)));
+      copy.sort((a, b) => (listRank(a) - listRank(b)) || (timeOrInf(a) - timeOrInf(b)));
     } else if (sortMode === 'folder') {
-      copy.sort((a, b) => primaryFolder(a).localeCompare(primaryFolder(b)) || (timeOrInf(a) - timeOrInf(b)));
+      copy.sort((a, b) => primaryFolder(a).localeCompare(primaryFolder(b)) || (timeOrInf(a) - timeOrInf(b)) || (listRank(a) - listRank(b)));
     } else {
-      copy.sort((a, b) => (timeOrInf(a) - timeOrInf(b)) || (a.priority - b.priority));
+      copy.sort((a, b) => (timeOrInf(a) - timeOrInf(b)) || (listRank(a) - listRank(b)));
     }
     return copy;
   }
