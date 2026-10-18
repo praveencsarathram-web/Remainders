@@ -2102,14 +2102,8 @@
         newlyFiredReminders.push(r);
       }
     });
-    // Within each group, show the oldest due reminder first.
-    // Order: P1 (Priority folder), P1, P2 (Priority folder), P2, … P5.
-    const popupRank = r => {
-      const folders = (r.folders && r.folders.length) ? r.folders : ['General'];
-      const isPriorityFolder = folders.includes('Priority');
-      const p = Math.min(Math.max(r.priority || 3, 1), 5);
-      return (p - 1) * 2 + (isPriorityFolder ? 1 : 2);
-    };
+    // Order: see queueRank(). Within each group, oldest due first.
+    const popupRank = queueRank;
     alarmQueue.sort((idA, idB) => {
       const a = reminders.find(r => r.id === idA);
       const b = reminders.find(r => r.id === idB);
@@ -2176,13 +2170,18 @@
     render();
   }
 
-  // Same ranking the due popup uses:
-  // 1 + Priority folder, 1, 2P, 2, 3 + Priority folder, 3, … 5.
-  function listRank(r) {
+  // One ranking shared by the due popup and every list sort.
+  // Groups: 1 + Priority folder, 1, 2P, 2, 3 + Priority folder, 3, … 5.
+  // Inside each group: no Praveen/B+ first, then Praveen, then anything
+  // with B+ last (with or without Praveen).
+  function queueRank(r) {
     const fl = (r.folders && r.folders.length) ? r.folders : ['General'];
     const p = Math.min(Math.max(r.priority || 3, 1), 5);
-    return (p - 1) * 2 + (fl.includes('Priority') ? 1 : 2);
+    const group = (p - 1) * 2 + (fl.includes('Priority') ? 0 : 1);
+    const sub = fl.includes('B+') ? 2 : (fl.includes('Praveen') ? 1 : 0);
+    return group * 3 + sub;
   }
+  function listRank(r) { return queueRank(r); }
   function sortList(list) {
     const copy = [...list];
     if (sortMode === 'priority') {
