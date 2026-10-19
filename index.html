@@ -1224,8 +1224,8 @@
   function quickSnoozeTomorrow(id) {
     const r = reminders.find(r => r.id === id);
     if (!r) return;
-    const base = r.when ? new Date(r.when) : new Date();
-    r.when = new Date(base.getTime() + 24 * 60 * 60000).toISOString();
+    // Counts from the current time, not the old due time.
+    r.when = new Date(Date.now() + 24 * 60 * 60000).toISOString();
     r.suppressedUntil = null;
     r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title);
     save();
@@ -1234,8 +1234,8 @@
   function quickSnoozeDayAfterTomorrow(id) {
     const r = reminders.find(r => r.id === id);
     if (!r) return;
-    const base = r.when ? new Date(r.when) : new Date();
-    r.when = new Date(base.getTime() + 48 * 60 * 60000).toISOString();
+    // Counts from the current time, not the old due time.
+    r.when = new Date(Date.now() + 48 * 60 * 60000).toISOString();
     r.suppressedUntil = null;
     r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title);
     save();
