@@ -602,7 +602,9 @@
   function markSynced() {
     lastSyncedAt = Date.now();
     try { localStorage.setItem('reminders_last_synced_at', String(lastSyncedAt)); } catch (e) {}
-    if (typeof patchSyncStatus === 'function') patchSyncStatus();
+    // Only refresh the small status line — never a full redraw.
+    const el = document.querySelector('.sync-status');
+    if (el && typeof renderSyncStatus === 'function') el.outerHTML = renderSyncStatus();
   }
 
   const root = document.getElementById('app-root');
@@ -840,7 +842,10 @@
       clearTimeout(pushTimer);
       clearTimeout(pushRetryTimer);
       pushRetryAttempt = 0;
-      pushTimer = setTimeout(pushToDrive, 800);
+      // Short pause so several quick taps go up as one upload.
+      pushTimer = setTimeout(() => { pushTimer = null; pushToDrive(); }, 300);
+    } else {
+      ensureConnected(); // reconnects, then uploads everything pending
     }
   }
 
@@ -850,9 +855,10 @@
      it created itself — it cannot browse the rest of your Drive.
      ========================================================= */
   function setDriveStatus(status, err) {
+    const changed = status !== driveStatus || (err || '') !== driveError;
     driveStatus = status;
     driveError = err || '';
-    patchSyncStatus();
+    if (changed) patchSyncStatus();
   }
   function patchSyncStatus() {
     // The Sync settings panel's buttons depend on connection state, so
@@ -976,13 +982,62 @@
     return data.id;
   }
 
+  // Returns Drive's new version number for the file, so we can tell later
+  // whether anyone else has written to it since.
   async function updateDriveFile(fileId, content) {
-    const res = await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+    const res = await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media&fields=version`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: content
     });
     if (!res.ok) throw new Error('Could not update Drive file (HTTP ' + res.status + ')');
+    try { const d = await res.json(); return d.version || null; } catch (e) { return null; }
+  }
+
+  // Tiny metadata request (a few bytes) — used to check "has anything
+  // changed on Drive?" every few seconds without downloading the whole file.
+  async function getRemoteVersion() {
+    const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}?fields=version`);
+    if (!res.ok) throw new Error('Could not check Drive (HTTP ' + res.status + ')');
+    const d = await res.json();
+    return d.version || null;
+  }
+
+  // Order-independent signature of the data, so two devices that hold the
+  // same reminders in a different order don't keep re-uploading forever.
+  function dataSignature(rems, folds, hist) {
+    const r = rems.map(x => x.id + ':' + (x.version || 1) + ':' + (x.updated || 0)).sort().join(',');
+    const f = folds.slice().sort().join(',');
+    const h = hist.map(e => e.id + '|' + e.at).sort().join(',');
+    return r + '#' + f + '#' + h;
+  }
+  function parseRemote(text) {
+    const parsed = JSON.parse(text || '[]');
+    return {
+      reminders: Array.isArray(parsed) ? parsed : (Array.isArray(parsed.reminders) ? parsed.reminders : []),
+      folders: Array.isArray(parsed) ? [] : (Array.isArray(parsed.folders) ? parsed.folders : []),
+      changeHistory: Array.isArray(parsed) ? [] : (Array.isArray(parsed.changeHistory) ? parsed.changeHistory : [])
+    };
+  }
+  // Merges Drive's copy into this device. Returns whether this device
+  // changed, and whether Drive is missing anything this device has.
+  function mergeRemote(remote) {
+    const before = dataSignature(reminders, folders, changeHistory);
+    const merged = mergeReminders(reminders, remote.reminders);
+    const mergedFolders = mergeFolders(folders, remote.folders);
+    const mergedHistory = mergeChangeHistory(changeHistory, remote.changeHistory);
+    const after = dataSignature(merged, mergedFolders, mergedHistory);
+    const remoteSig = dataSignature(remote.reminders, remote.folders, remote.changeHistory);
+    const localChanged = after !== before;
+    if (localChanged) {
+      reminders = merged;
+      folders = mergedFolders;
+      changeHistory = mergedHistory;
+      migrateStaleSuppressedFlags();
+      pruneAlarmQueue();
+      saveLocal();
+    }
+    return { localChanged, remoteBehind: after !== remoteSig };
   }
 
   async function readDriveFile(fileId) {
@@ -992,7 +1047,7 @@
   }
 
   // On connect: pull whatever's in Drive (if anything) as the starting point,
-  // merging by most-recently-modified reminder id so neither device's data is lost.
+  // merging by version so neither device's data is lost.
   async function syncFromDrive() {
     try {
       setDriveStatus('syncing');
@@ -1000,41 +1055,49 @@
       if (file) {
         driveFileId = file.id;
         const text = await readDriveFile(file.id);
-        const parsed = JSON.parse(text || '[]');
-        const remoteReminders = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.reminders) ? parsed.reminders : []);
-        const remoteFolders = Array.isArray(parsed) ? [] : (Array.isArray(parsed.folders) ? parsed.folders : []);
-        const remoteChangeHistory = Array.isArray(parsed) ? [] : (Array.isArray(parsed.changeHistory) ? parsed.changeHistory : []);
-        reminders = mergeReminders(reminders, remoteReminders);
-        folders = mergeFolders(folders, remoteFolders);
-        changeHistory = mergeChangeHistory(changeHistory, remoteChangeHistory);
-        migrateStaleSuppressedFlags();
-        pruneAlarmQueue();
-        saveLocal();
-        // Push the reconciled result straight back so Drive holds the
-        // complete, canonical copy — same reasoning as the background pull.
-        await pushToDrive();
+        const result = mergeRemote(parseRemote(text));
+        if (result.localChanged) render();
+        lastRemoteVersion = null; // force push below to write without re-reading
+        if (result.remoteBehind) await pushToDrive();
+        else lastRemoteVersion = await getRemoteVersion();
       } else {
         driveFileId = await createDriveFile(JSON.stringify({ reminders, folders, changeHistory }));
-        allSynced = true;
+        lastRemoteVersion = await getRemoteVersion();
       }
+      allSynced = true;
       markSynced();
       setDriveStatus('synced');
-      render();
     } catch (e) {
       setDriveStatus('error', e.message || String(e));
     }
   }
 
+  let lastRemoteVersion = null; // Drive's file version as of our last read/write
+  let pushInFlight = false;
+  let pushAgain = false;
   async function pushToDrive() {
-    if (!accessToken) return;
+    if (!accessToken) { ensureConnected(); return; }
+    if (pushInFlight) { pushAgain = true; return; }
+    pushInFlight = true;
+    clearTimeout(pushTimer); pushTimer = null;
     try {
       setDriveStatus('syncing');
-      const payload = JSON.stringify({ reminders, folders, changeHistory });
       if (!driveFileId) {
         const file = await findDriveFile();
-        driveFileId = file ? file.id : await createDriveFile(payload);
+        driveFileId = file ? file.id : await createDriveFile(JSON.stringify({ reminders, folders, changeHistory }));
       }
-      await updateDriveFile(driveFileId, payload);
+      // If another device wrote since we last looked, fold its changes in
+      // first so this upload never wipes them out.
+      if (lastRemoteVersion !== null) {
+        const v = await getRemoteVersion();
+        if (v !== lastRemoteVersion) {
+          const res = mergeRemote(parseRemote(await readDriveFile(driveFileId)));
+          if (res.localChanged) render();
+        }
+      }
+      const payload = JSON.stringify({ reminders, folders, changeHistory });
+      const newVersion = await updateDriveFile(driveFileId, payload);
+      lastRemoteVersion = newVersion !== null ? newVersion : await getRemoteVersion();
       markSynced();
       setDriveStatus('synced');
       allSynced = true;
@@ -1044,6 +1107,9 @@
       allSynced = false;
       setDriveStatus('retrying', e.message || String(e));
       scheduleRetryPush();
+    } finally {
+      pushInFlight = false;
+      if (pushAgain) { pushAgain = false; pushToDrive(); }
     }
   }
   function scheduleRetryPush() {
@@ -1051,6 +1117,24 @@
     const delay = PUSH_RETRY_DELAYS[Math.min(pushRetryAttempt, PUSH_RETRY_DELAYS.length - 1)];
     pushRetryAttempt++;
     pushRetryTimer = setTimeout(pushToDrive, delay);
+  }
+
+  // Automatically reconnect whenever the Drive connection drops (expired
+  // token, app opened with no signal, phone woke from sleep, etc.) —
+  // no need to tap "Sync".
+  let reconnecting = false;
+  async function ensureConnected() {
+    if (accessToken || reconnecting || !appsScriptUrl || !appsScriptSecret) return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+    reconnecting = true;
+    try {
+      setDriveStatus('connecting');
+      const ok = await silentRefresh();
+      if (ok) await syncFromDrive();
+      else setDriveStatus('idle');
+    } finally {
+      reconnecting = false;
+    }
   }
 
   function mergeFolders(local, remote) {
@@ -1094,39 +1178,33 @@
     return Array.from(byId.values());
   }
 
-  // Silent background pull — keeps this device in sync with changes made
-  // elsewhere without the user having to tap "Sync now".
+  // Silent background pull. Every few seconds it asks Drive for just the
+  // file's version number (tiny); the full file is only downloaded when
+  // another device has actually changed something.
   let pullInFlight = false;
   async function pullFromDrive() {
-    if (!accessToken || !driveFileId || pullInFlight) return;
+    if (!accessToken) { ensureConnected(); return; }
+    if (!driveFileId || pullInFlight || pushInFlight) return;
     pullInFlight = true;
     try {
-      const text = await readDriveFile(driveFileId);
-      const parsed = JSON.parse(text || '[]');
-      const remoteReminders = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.reminders) ? parsed.reminders : []);
-      const remoteFolders = Array.isArray(parsed) ? [] : (Array.isArray(parsed.folders) ? parsed.folders : []);
-      const remoteChangeHistory = Array.isArray(parsed) ? [] : (Array.isArray(parsed.changeHistory) ? parsed.changeHistory : []);
-      const merged = mergeReminders(reminders, remoteReminders);
-      const mergedFolders = mergeFolders(folders, remoteFolders);
-      const mergedChangeHistory = mergeChangeHistory(changeHistory, remoteChangeHistory);
-      const changed = JSON.stringify(merged) !== JSON.stringify(reminders) || JSON.stringify(mergedFolders) !== JSON.stringify(folders) || JSON.stringify(mergedChangeHistory) !== JSON.stringify(changeHistory);
-      if (changed) {
-        reminders = merged;
-        folders = mergedFolders;
-        changeHistory = mergedChangeHistory;
-        migrateStaleSuppressedFlags();
-        pruneAlarmQueue();
-        saveLocal();
-        render();
-        // The merge just combined in something Drive didn't have (or vice
-        // versa) — push the fully-reconciled result straight back so Drive
-        // itself becomes the complete, canonical copy other devices will see.
+      const v = await getRemoteVersion();
+      if (v !== null && v === lastRemoteVersion) {
+        if (!pushTimer) allSynced = true;
+        markSynced();
+        if (driveStatus !== 'synced' && driveStatus !== 'retrying') setDriveStatus('synced');
+        return;
+      }
+      const result = mergeRemote(parseRemote(await readDriveFile(driveFileId)));
+      lastRemoteVersion = v;
+      if (result.localChanged) render();
+      if (result.remoteBehind) {
+        pullInFlight = false;
         await pushToDrive();
       } else {
         allSynced = true;
+        markSynced();
+        setDriveStatus('synced');
       }
-      markSynced();
-      setDriveStatus('synced');
     } catch (e) {
       setDriveStatus('error', e.message || String(e));
     } finally {
@@ -2104,9 +2182,10 @@
     });
     // Order: see queueRank(). Within each group, oldest due first.
     const popupRank = queueRank;
+    const byId = new Map(reminders.map(r => [r.id, r]));
     alarmQueue.sort((idA, idB) => {
-      const a = reminders.find(r => r.id === idA);
-      const b = reminders.find(r => r.id === idB);
+      const a = byId.get(idA);
+      const b = byId.get(idB);
       if (!a || !b) return 0;
       return (popupRank(a) - popupRank(b)) || (new Date(a.when) - new Date(b.when));
     });
@@ -2204,6 +2283,7 @@
      RENDER
      ========================================================= */
   let renderScheduled = false;
+  let searchDebounce = null;
   let lastRenderAt = 0;
   function render() {
     if (renderScheduled) return;
@@ -2514,18 +2594,33 @@
     `;
   }
 
+  const LIST_PAGE = 40;
+  let listLimit = LIST_PAGE;
+  let lastListFilterKey = '';
   function renderLists(active, done) {
+    // Start back at the first page whenever the filters/search change.
+    const filterKey = [searchQuery, priorityFilter, dateFilterMode, folderFilterSelection.join('|'), dueStateFilter, sortMode, pBothToggleOn].join('~');
+    if (filterKey !== lastListFilterKey) { lastListFilterKey = filterKey; listLimit = LIST_PAGE; }
     if (active.length === 0 && done.length === 0) {
       if (searchQuery.trim()) {
         return `<div class="empty-state"><div class="glyph">&#9684;</div>No reminders match "${escapeHtml(searchQuery)}".</div>`;
       }
       return `<div class="empty-state"><div class="glyph">&#9684;</div>Nothing on your list yet.<br/>Add your first reminder above.</div>`;
     }
+    // Only draw the first batch of cards — drawing all 300+ at once (each
+    // with ~25 buttons) is what made the phone slow. "Show more" loads the next batch.
+    const total = active.length + done.length;
+    const shownActive = active.slice(0, listLimit);
+    const shownDone = done.slice(0, Math.max(0, listLimit - shownActive.length));
     let html = '';
-    if (active.length) html += `<div class="reminder-list">${active.map(renderItem).join('')}</div>`;
-    if (done.length) {
+    if (shownActive.length) html += `<div class="reminder-list">${shownActive.map(renderItem).join('')}</div>`;
+    if (shownDone.length) {
       html += `<div class="section-label">Checked</div>`;
-      html += `<div class="reminder-list">${done.map(renderItem).join('')}</div>`;
+      html += `<div class="reminder-list">${shownDone.map(renderItem).join('')}</div>`;
+    }
+    const hidden = total - shownActive.length - shownDone.length;
+    if (hidden > 0) {
+      html += `<button class="add-trigger-btn" id="show-more-btn" style="margin-top:14px; background:var(--done-bg); color:var(--ink);">Show ${Math.min(LIST_PAGE, hidden)} more (${hidden} not shown)</button>`;
     }
     return html;
   }
@@ -3132,8 +3227,6 @@
   }
 
   function wireEvents() {
-    document.querySelectorAll('[data-desktop-nav]').forEach(el => el.addEventListener('click', () => goToDesktopNav(el.dataset.desktopNav)));
-    document.querySelectorAll('[data-stat-filter]').forEach(el => el.addEventListener('click', () => toggleDueStateFilter(el.dataset.statFilter)));
     const selectToggle = document.getElementById('select-toggle');
     if (selectToggle) selectToggle.addEventListener('click', toggleSelectMode);
     const selectAllBtn = document.getElementById('select-all-btn');
@@ -3176,31 +3269,6 @@
     if (addCancelBtn) addCancelBtn.addEventListener('click', closeAddPopup);
     const addPopupTitle = document.getElementById('add-popup-title');
     if (addPopupTitle) addPopupTitle.addEventListener('keydown', e => { if (e.key === 'Enter') submitAddPopup(); });
-    document.querySelectorAll('[data-bump]').forEach(el => el.addEventListener('click', () => { bumpAddTime(parseInt(el.dataset.bump, 10)); markSnoozeSelected(el); }));
-    document.querySelectorAll('[data-bump-abs]').forEach(el => el.addEventListener('click', () => { bumpAddTimeAbsolute(parseInt(el.dataset.bumpAbs, 10)); markSnoozeSelected(el); }));
-    document.querySelectorAll('[data-add-priority]').forEach(el => el.addEventListener('click', () => setAddPriority(parsePriorityChoice(el.dataset.p))));
-
-    document.querySelectorAll('.check').forEach(el => el.addEventListener('click', () => toggleDone(el.dataset.id)));
-    document.querySelectorAll('[data-pick]').forEach(el => el.addEventListener('click', () => togglePick(el.dataset.pick)));
-    document.querySelectorAll('[data-priority-id]').forEach(el => el.addEventListener('click', () => requestPriorityChange(el.dataset.priorityId, parsePriorityChoice(el.dataset.p))));
-    document.querySelectorAll('[data-folder-picker-toggle]').forEach(el => el.addEventListener('click', () => toggleFolderPickerOpen(el.dataset.folderPickerToggle)));
-    document.querySelectorAll('[data-folder-toggle-context]').forEach(el => el.addEventListener('click', () => toggleFolderForContext(el.dataset.folderToggleContext, el.dataset.folderToggleId || null, el.dataset.folderToggleName)));
-    document.querySelectorAll('[data-folder-select-all-context]').forEach(el => el.addEventListener('click', () => setFolderSelectionForContext(el.dataset.folderSelectAllContext, el.dataset.folderSelectAllId || null, 'all')));
-    document.querySelectorAll('[data-folder-deselect-all-context]').forEach(el => el.addEventListener('click', () => setFolderSelectionForContext(el.dataset.folderDeselectAllContext, el.dataset.folderDeselectAllId || null, 'none')));
-    document.querySelectorAll('[data-folder-shortcut-toggle-context]').forEach(el => el.addEventListener('click', () => toggleQuickFolderShortcut(el.dataset.folderShortcutToggleContext, el.dataset.folderShortcutToggleId || null, el.dataset.folderShortcutToggleName)));
-    document.querySelectorAll('[data-quick-snooze]').forEach(el => el.addEventListener('click', () => quickSnooze(el.dataset.quickSnooze, parseInt(el.dataset.minutes, 10))));
-    document.querySelectorAll('[data-quick-snooze-abs]').forEach(el => el.addEventListener('click', () => quickSnoozeAbsolute(el.dataset.quickSnoozeAbs, parseInt(el.dataset.hour, 10))));
-    document.querySelectorAll('[data-quick-snooze-tom]').forEach(el => el.addEventListener('click', () => quickSnoozeTomorrow(el.dataset.quickSnoozeTom)));
-    document.querySelectorAll('[data-quick-snooze-daf]').forEach(el => el.addEventListener('click', () => quickSnoozeDayAfterTomorrow(el.dataset.quickSnoozeDaf)));
-    document.querySelectorAll('[data-quick-snooze-nxw]').forEach(el => el.addEventListener('click', () => quickSnoozeNextSunday(el.dataset.quickSnoozeNxw)));
-    document.querySelectorAll('[data-edit-priority]').forEach(el => el.addEventListener('click', () => setEditPriority(parsePriorityChoice(el.dataset.p))));
-    document.querySelectorAll('[data-alarm-priority-id]').forEach(el => el.addEventListener('click', () => setAlarmPriority(el.dataset.alarmPriorityId, parsePriorityChoice(el.dataset.p))));
-    document.querySelectorAll('[data-edit-id]').forEach(el => el.addEventListener('click', () => startEdit(el.dataset.editId)));
-    document.querySelectorAll('[data-edit-bump]').forEach(el => el.addEventListener('click', () => { bumpEditTime(el.dataset.editBump, parseInt(el.dataset.minutes, 10)); markSnoozeSelected(el); }));
-    document.querySelectorAll('[data-edit-bump-abs]').forEach(el => el.addEventListener('click', () => { bumpEditTimeAbsolute(el.dataset.editBumpAbs, parseInt(el.dataset.hour, 10)); markSnoozeSelected(el); }));
-    document.querySelectorAll('[data-cancel-edit]').forEach(el => el.addEventListener('click', cancelEdit));
-    document.querySelectorAll('[data-delete-from-edit]').forEach(el => el.addEventListener('click', () => deleteFromEdit(el.dataset.deleteFromEdit)));
-    document.querySelectorAll('[data-delete-from-card]').forEach(el => el.addEventListener('click', () => deleteFromEdit(el.dataset.deleteFromCard)));
     document.querySelectorAll('[data-save-edit]').forEach(el => el.addEventListener('click', () => {
       const id = el.dataset.saveEdit;
       const titleEl = document.getElementById('edit-title-' + id);
@@ -3249,15 +3317,11 @@
     if (pBothToggleBtn) pBothToggleBtn.addEventListener('click', togglePBothButton);
     const createFolderBtn = document.getElementById('create-folder-btn');
     const newFolderInput = document.getElementById('new-folder-input');
-    document.querySelectorAll('[data-voice-input-target]').forEach(el => el.addEventListener('click', () => startVoiceInput(el.dataset.voiceInputTarget)));
     if (createFolderBtn && newFolderInput) {
       createFolderBtn.addEventListener('click', () => { createFolder(newFolderInput.value); });
       newFolderInput.addEventListener('input', () => { newFolderDraft = newFolderInput.value; });
       newFolderInput.addEventListener('keydown', e => { if (e.key === 'Enter') createFolder(newFolderInput.value); });
     }
-    document.querySelectorAll('[data-delete-folder]').forEach(el => el.addEventListener('click', () => requestDeleteFolder(el.dataset.deleteFolder)));
-    document.querySelectorAll('[data-edit-folder]').forEach(el => el.addEventListener('click', () => startEditFolder(el.dataset.editFolder)));
-    document.querySelectorAll('[data-view-folder]').forEach(el => el.addEventListener('click', () => viewFolderReminders(el.dataset.viewFolder)));
     const cancelRenameFolderBtn = document.getElementById('cancel-rename-folder-btn');
     if (cancelRenameFolderBtn) cancelRenameFolderBtn.addEventListener('click', cancelEditFolder);
     document.querySelectorAll('[data-save-rename-folder]').forEach(el => el.addEventListener('click', () => {
@@ -3276,9 +3340,6 @@
     if (trashRestoreSelectedBtn) trashRestoreSelectedBtn.addEventListener('click', restoreSelectedFromTrash);
     const trashDeleteSelectedBtn = document.getElementById('trash-delete-selected-btn');
     if (trashDeleteSelectedBtn) trashDeleteSelectedBtn.addEventListener('click', requestDeleteSelectedForever);
-    document.querySelectorAll('[data-trash-pick]').forEach(el => el.addEventListener('click', () => toggleTrashPick(el.dataset.trashPick)));
-    document.querySelectorAll('[data-trash-restore]').forEach(el => el.addEventListener('click', () => restoreFromTrash(el.dataset.trashRestore)));
-    document.querySelectorAll('[data-trash-delete-forever]').forEach(el => el.addEventListener('click', () => requestDeleteForever(el.dataset.trashDeleteForever)));
     const confirmTrashDeleteBtn = document.getElementById('confirm-trash-delete-btn');
     if (confirmTrashDeleteBtn) confirmTrashDeleteBtn.addEventListener('click', confirmDeleteForever);
     const cancelTrashDeleteBtn = document.getElementById('cancel-trash-delete-btn');
@@ -3302,25 +3363,16 @@
     const bulkApply = document.getElementById('bulk-apply');
     const bulkTime = document.getElementById('bulk-time');
     if (bulkApply) bulkApply.addEventListener('click', () => applyBulkTime(bulkTime.value));
-    document.querySelectorAll('.bulk-chip').forEach(el => el.addEventListener('click', () => applyBulkTime(el.dataset.preset)));
-    document.querySelectorAll('[data-bulk-snooze]').forEach(el => el.addEventListener('click', () => applyBulkSnooze(parseInt(el.dataset.bulkSnooze, 10))));
-    document.querySelectorAll('[data-bulk-snooze-abs]').forEach(el => el.addEventListener('click', () => applyBulkSnoozeAbsolute(parseInt(el.dataset.bulkSnoozeAbs, 10))));
-    document.querySelectorAll('[data-bulk-priority]').forEach(el => el.addEventListener('click', () => requestBulkPriority(parsePriorityChoice(el.dataset.p))));
 
     const alarmDelete = document.getElementById('alarm-delete');
     if (alarmDelete) alarmDelete.addEventListener('click', () => deleteFromAlarm(alarmDelete.dataset.alarmId));
     const alarmEdit = document.getElementById('alarm-edit');
     if (alarmEdit) alarmEdit.addEventListener('click', () => editFromAlarm(alarmEdit.dataset.alarmId));
-    document.querySelectorAll('[data-snooze]').forEach(el => el.addEventListener('click', () => snoozeCurrent(el.dataset.alarmId, parseInt(el.dataset.snooze, 10))));
-    document.querySelectorAll('[data-snooze-abs]').forEach(el => el.addEventListener('click', () => snoozeCurrentAbsolute(el.dataset.alarmId, parseInt(el.dataset.snoozeAbs, 10))));
 
     const alarmEditSave = document.getElementById('alarm-edit-save');
     if (alarmEditSave) alarmEditSave.addEventListener('click', saveAlarmEdit);
     const alarmEditCancel = document.getElementById('alarm-edit-cancel');
     if (alarmEditCancel) alarmEditCancel.addEventListener('click', cancelAlarmEdit);
-    document.querySelectorAll('[data-alarm-edit-bump]').forEach(el => el.addEventListener('click', () => { bumpAlarmEditTime(parseInt(el.dataset.alarmEditBump, 10)); markSnoozeSelected(el); }));
-    document.querySelectorAll('[data-alarm-edit-bump-abs]').forEach(el => el.addEventListener('click', () => { bumpAlarmEditTimeAbsolute(parseInt(el.dataset.alarmEditBumpAbs, 10)); markSnoozeSelected(el); }));
-    document.querySelectorAll('[data-alarm-edit-priority]').forEach(el => el.addEventListener('click', () => setAlarmEditPriority(parsePriorityChoice(el.dataset.p))));
 
     const saveClientIdBtn = document.getElementById('save-client-id');
     if (saveClientIdBtn) saveClientIdBtn.addEventListener('click', () => {
@@ -3361,7 +3413,7 @@
 
     const searchInput = document.getElementById('search-input');
     if (searchInput) {
-      searchInput.addEventListener('input', () => { searchQuery = searchInput.value; render(); });
+      searchInput.addEventListener('input', () => { searchQuery = searchInput.value; clearTimeout(searchDebounce); searchDebounce = setTimeout(render, 200); });
     }
     document.querySelectorAll('[data-filter-priority]').forEach(el => {
       el.addEventListener('click', () => togglePriorityFilter(parsePriorityChoice(el.dataset.filterPriority)));
@@ -3373,6 +3425,63 @@
       el.addEventListener('click', () => setDateFilterMode(el.dataset.dateFilter));
     });
   }
+
+
+  /* One shared click listener for every button inside the list, instead of
+     attaching a new listener to each of thousands of buttons on every redraw. */
+  const delegatedClicks = [];
+  function delegate(sel, fn) { delegatedClicks.push([sel, fn]); }
+  delegate('#show-more-btn', () => { listLimit += LIST_PAGE; render(); });
+  delegate('[data-desktop-nav]', el => (() => goToDesktopNav(el.dataset.desktopNav))());
+  delegate('[data-stat-filter]', el => (() => toggleDueStateFilter(el.dataset.statFilter))());
+  delegate('[data-bump]', el => (() => { bumpAddTime(parseInt(el.dataset.bump, 10)); markSnoozeSelected(el); })());
+  delegate('[data-bump-abs]', el => (() => { bumpAddTimeAbsolute(parseInt(el.dataset.bumpAbs, 10)); markSnoozeSelected(el); })());
+  delegate('[data-add-priority]', el => (() => setAddPriority(parsePriorityChoice(el.dataset.p)))());
+  delegate('.check', el => (() => toggleDone(el.dataset.id))());
+  delegate('[data-pick]', el => (() => togglePick(el.dataset.pick))());
+  delegate('[data-priority-id]', el => (() => requestPriorityChange(el.dataset.priorityId, parsePriorityChoice(el.dataset.p)))());
+  delegate('[data-folder-picker-toggle]', el => (() => toggleFolderPickerOpen(el.dataset.folderPickerToggle))());
+  delegate('[data-folder-toggle-context]', el => (() => toggleFolderForContext(el.dataset.folderToggleContext, el.dataset.folderToggleId || null, el.dataset.folderToggleName))());
+  delegate('[data-folder-select-all-context]', el => (() => setFolderSelectionForContext(el.dataset.folderSelectAllContext, el.dataset.folderSelectAllId || null, 'all'))());
+  delegate('[data-folder-deselect-all-context]', el => (() => setFolderSelectionForContext(el.dataset.folderDeselectAllContext, el.dataset.folderDeselectAllId || null, 'none'))());
+  delegate('[data-folder-shortcut-toggle-context]', el => (() => toggleQuickFolderShortcut(el.dataset.folderShortcutToggleContext, el.dataset.folderShortcutToggleId || null, el.dataset.folderShortcutToggleName))());
+  delegate('[data-quick-snooze]', el => (() => quickSnooze(el.dataset.quickSnooze, parseInt(el.dataset.minutes, 10)))());
+  delegate('[data-quick-snooze-abs]', el => (() => quickSnoozeAbsolute(el.dataset.quickSnoozeAbs, parseInt(el.dataset.hour, 10)))());
+  delegate('[data-quick-snooze-tom]', el => (() => quickSnoozeTomorrow(el.dataset.quickSnoozeTom))());
+  delegate('[data-quick-snooze-daf]', el => (() => quickSnoozeDayAfterTomorrow(el.dataset.quickSnoozeDaf))());
+  delegate('[data-quick-snooze-nxw]', el => (() => quickSnoozeNextSunday(el.dataset.quickSnoozeNxw))());
+  delegate('[data-edit-priority]', el => (() => setEditPriority(parsePriorityChoice(el.dataset.p)))());
+  delegate('[data-alarm-priority-id]', el => (() => setAlarmPriority(el.dataset.alarmPriorityId, parsePriorityChoice(el.dataset.p)))());
+  delegate('[data-edit-id]', el => (() => startEdit(el.dataset.editId))());
+  delegate('[data-edit-bump]', el => (() => { bumpEditTime(el.dataset.editBump, parseInt(el.dataset.minutes, 10)); markSnoozeSelected(el); })());
+  delegate('[data-edit-bump-abs]', el => (() => { bumpEditTimeAbsolute(el.dataset.editBumpAbs, parseInt(el.dataset.hour, 10)); markSnoozeSelected(el); })());
+  delegate('[data-cancel-edit]', el => (cancelEdit)());
+  delegate('[data-delete-from-edit]', el => (() => deleteFromEdit(el.dataset.deleteFromEdit))());
+  delegate('[data-delete-from-card]', el => (() => deleteFromEdit(el.dataset.deleteFromCard))());
+  delegate('[data-voice-input-target]', el => (() => startVoiceInput(el.dataset.voiceInputTarget))());
+  delegate('[data-delete-folder]', el => (() => requestDeleteFolder(el.dataset.deleteFolder))());
+  delegate('[data-edit-folder]', el => (() => startEditFolder(el.dataset.editFolder))());
+  delegate('[data-view-folder]', el => (() => viewFolderReminders(el.dataset.viewFolder))());
+  delegate('[data-trash-pick]', el => (() => toggleTrashPick(el.dataset.trashPick))());
+  delegate('[data-trash-restore]', el => (() => restoreFromTrash(el.dataset.trashRestore))());
+  delegate('[data-trash-delete-forever]', el => (() => requestDeleteForever(el.dataset.trashDeleteForever))());
+  delegate('.bulk-chip', el => (() => applyBulkTime(el.dataset.preset))());
+  delegate('[data-bulk-snooze]', el => (() => applyBulkSnooze(parseInt(el.dataset.bulkSnooze, 10)))());
+  delegate('[data-bulk-snooze-abs]', el => (() => applyBulkSnoozeAbsolute(parseInt(el.dataset.bulkSnoozeAbs, 10)))());
+  delegate('[data-bulk-priority]', el => (() => requestBulkPriority(parsePriorityChoice(el.dataset.p)))());
+  delegate('[data-snooze]', el => (() => snoozeCurrent(el.dataset.alarmId, parseInt(el.dataset.snooze, 10)))());
+  delegate('[data-snooze-abs]', el => (() => snoozeCurrentAbsolute(el.dataset.alarmId, parseInt(el.dataset.snoozeAbs, 10)))());
+  delegate('[data-alarm-edit-bump]', el => (() => { bumpAlarmEditTime(parseInt(el.dataset.alarmEditBump, 10)); markSnoozeSelected(el); })());
+  delegate('[data-alarm-edit-bump-abs]', el => (() => { bumpAlarmEditTimeAbsolute(parseInt(el.dataset.alarmEditBumpAbs, 10)); markSnoozeSelected(el); })());
+  delegate('[data-alarm-edit-priority]', el => (() => setAlarmEditPriority(parsePriorityChoice(el.dataset.p)))());
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!t || !t.closest) return;
+    for (const [sel, fn] of delegatedClicks) {
+      const el = t.closest(sel);
+      if (el) fn(el);
+    }
+  });
 
   /* =========================================================
      BOOT
@@ -3391,13 +3500,17 @@
   render();
   setInterval(checkDue, 10000);
   checkDue();
-  setInterval(() => { if (!document.hidden) pullFromDrive(); }, 10000);
+  // Check Drive for other devices' changes every 4 seconds (a tiny request;
+  // the full file only downloads when something actually changed).
+  setInterval(() => { if (!document.hidden) pullFromDrive(); }, 4000);
+  // If the connection ever drops, quietly reconnect on its own.
+  setInterval(ensureConnected, 20000);
 
   // The moment the browser regains a connection (wifi/data reconnects),
   // immediately retry any pending push and pull, instead of waiting for
   // the next scheduled retry or pull interval.
   window.addEventListener('online', () => {
-    if (!accessToken) return;
+    if (!accessToken) { ensureConnected(); return; }
     pushRetryAttempt = 0;
     clearTimeout(pushRetryTimer);
     clearTimeout(pushTimer);
@@ -3417,12 +3530,7 @@
   // load — no popup, no tap — instead of requiring a manual reconnect
   // every time the app is opened.
   if (appsScriptUrl && appsScriptSecret) {
-    (async () => {
-      setDriveStatus('connecting');
-      const ok = await silentRefresh();
-      if (ok) { await syncFromDrive(); }
-      else { setDriveStatus('idle'); }
-    })();
+    ensureConnected();
   }
 
   // Also proactively refresh a bit before the ~1 hour access token would
@@ -3438,7 +3546,13 @@
   // while this device was asleep.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
+      if (!accessToken) ensureConnected();
       pullFromDrive().then(checkDue).catch(checkDue);
+    } else if (pushTimer && accessToken) {
+      // Leaving the app with an unsent change — upload it right now
+      // instead of waiting, so it isn't stuck on this phone.
+      clearTimeout(pushTimer); pushTimer = null;
+      pushToDrive();
     }
   });
 
