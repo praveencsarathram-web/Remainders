@@ -2251,14 +2251,11 @@
 
   // One ranking shared by the due popup and every list sort.
   // Groups: 1 + Priority folder, 1, 2P, 2, 3 + Priority folder, 3, … 5.
-  // Inside each group: no Praveen/B+ first, then Praveen, then anything
-  // with B+ last (with or without Praveen).
+  // Praveen/B+ tags are ignored: inside each group, order is by due time only.
   function queueRank(r) {
     const fl = (r.folders && r.folders.length) ? r.folders : ['General'];
     const p = Math.min(Math.max(r.priority || 3, 1), 5);
-    const group = (p - 1) * 2 + (fl.includes('Priority') ? 0 : 1);
-    const sub = fl.includes('B+') ? 2 : (fl.includes('Praveen') ? 1 : 0);
-    return group * 3 + sub;
+    return (p - 1) * 2 + (fl.includes('Priority') ? 0 : 1);
   }
   function listRank(r) { return queueRank(r); }
   function sortList(list) {
