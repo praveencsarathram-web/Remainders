@@ -538,7 +538,7 @@
   let viewingChangeHistory = false;
   let topToggleOn = false;
   let praveenToggleOn = false;
-  let pBothToggleOn = false; // "P" button: must be in BOTH Praveen AND Priority folders
+  let pBothToggleOn = false; // "P" button: shows reminders tagged with the P pill
   let newFolderError = '';
   let newFolderDraft = '';
   let voiceListeningFor = null; // id of the input currently being dictated into, or null
@@ -1612,7 +1612,7 @@
   }
   function renderFolderShortcuts(context, id, currentFolders, redPriorityPill) {
     const selected = (currentFolders && currentFolders.length) ? currentFolders : ['General'];
-    const shortcutNames = ['Priority', 'Praveen', 'B+'];
+    const shortcutNames = ['P', 'Priority', 'Praveen', 'B+'];
     return `
       <div class="folder-shortcut-row">
         ${shortcutNames.map(name => {
@@ -1961,8 +1961,9 @@
       if (!sameDay) return false;
     }
     if (pBothToggleOn) {
-      const bothFolders = (r.folders && r.folders.length) ? r.folders : ['General'];
-      if (!(bothFolders.includes('Praveen') && bothFolders.includes('Priority'))) return false;
+      // "P" header button: show only reminders tagged with the P pill.
+      const pFolders = (r.folders && r.folders.length) ? r.folders : ['General'];
+      if (!pFolders.includes('P')) return false;
     }
     if (folderFilterSelection.length) {
       const rFolders = (r.folders && r.folders.length) ? r.folders : ['General'];
@@ -2375,7 +2376,7 @@
             <button class="pill-btn trash-toggle" id="import-excel-btn" title="Import reminders from Excel">&#128229; Import</button>
             <button class="pill-btn trash-toggle priority-header-btn ${topToggleOn ? 'active' : ''}" id="top-priority-btn" title="Priority folder, Priority 1">Priority</button>
             <button class="pill-btn trash-toggle ${praveenToggleOn ? 'active' : ''}" id="praveen-folder-toggle-btn" title="Praveen folder"${praveenToggleOn ? ' style="background:#FFE600; color:#000000;"' : ''}>Praveen</button>
-            <button class="search-toggle-btn ${pBothToggleOn ? 'active' : ''}" id="p-both-toggle-btn" title="In both Praveen AND Priority folders" style="font-weight:700; font-family:'IBM Plex Sans',sans-serif;">P</button>
+            <button class="search-toggle-btn ${pBothToggleOn ? 'active' : ''}" id="p-both-toggle-btn" title="Show reminders marked P" style="font-weight:700; font-family:'IBM Plex Sans',sans-serif;">P</button>
             <input type="file" id="import-excel-input" accept=".xlsx,.xls" style="position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;" />
           </div>
         </div>
