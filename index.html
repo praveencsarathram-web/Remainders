@@ -538,7 +538,8 @@
   let viewingChangeHistory = false;
   let topToggleOn = false;
   let praveenToggleOn = false;
-  let pBothToggleOn = false; // "P" button: shows reminders tagged with the P pill
+  let pBothToggleOn = false; ppToggleOn = false; // "P" button: shows reminders tagged with the P pill
+  let ppToggleOn = false; // "PP" button: shows reminders tagged with the PP pill
   let newFolderError = '';
   let newFolderDraft = '';
   let voiceListeningFor = null; // id of the input currently being dictated into, or null
@@ -726,20 +727,72 @@
   function ensurePriorityFolderExists() {
     if (!folders.some(f => f.toLowerCase() === 'priority')) folders.push('Priority');
   }
+  function ensureFolderExists(name) {
+    if (!folders.some(f => f.toLowerCase() === name.toLowerCase())) folders.push(name);
+  }
+  // PP / P / Priority tag rules:
+  //   tick PP -> PP + P + Priority + priority 1
+  //   tick P  -> P + Priority + priority 1
+  //   untick PP -> only PP          untick P -> P + PP
+  //   untick Priority -> Priority + P + PP
+  //   change priority away from 1 -> P and PP come off (Priority stays)
+  const TAG_ADDS = { PP: ['PP', 'P', 'Priority'], P: ['P', 'Priority'] };
+  const TAG_REMOVES = { Priority: ['Priority', 'P', 'PP'], P: ['P', 'PP'] };
+  function tagTurnsOnP1(list, name) {
+    return (name === 'P' || name === 'PP') && !(list || []).includes(name);
+  }
+  function applyTagToggle(list, name, fallbackGeneral) {
+    let fl = (list || []).slice();
+    if (!fl.includes(name)) {
+      (TAG_ADDS[name] || [name]).forEach(f => { ensureFolderExists(f); if (!fl.includes(f)) fl.push(f); });
+    } else {
+      const rm = TAG_REMOVES[name] || [name];
+      fl = fl.filter(f => !rm.includes(f));
+      if (fallbackGeneral && fl.length === 0) fl = ['General'];
+    }
+    return fl;
+  }
+  // Repairs any reminder that breaks the rules (P/PP without Priority or not
+  // at priority 1) — covers existing P reminders, Excel imports, backups and
+  // changes coming in from other devices.
+  function enforceTagRules(rems, folds) {
+    let changed = false;
+    rems.forEach(r => {
+      const fl = folderListOf(r.folders);
+      const hasP = fl.includes('P') || fl.includes('PP');
+      if (!hasP) return;
+      const need = fl.includes('PP') ? ['P', 'Priority'] : ['Priority'];
+      const missing = need.filter(f => !fl.includes(f));
+      if (missing.length || r.priority !== 1) {
+        if (missing.length) r.folders = fl.concat(missing);
+        r.priority = 1;
+        r.updated = Date.now(); r.version = (r.version || 1) + 1;
+        changed = true;
+      }
+    });
+    ['PP', 'P', 'Priority'].forEach(t => {
+      if (rems.some(r => (r.folders || []).includes(t)) && !folds.some(f => f.toLowerCase() === t.toLowerCase())) {
+        folds.push(t); changed = true;
+      }
+    });
+    return changed;
+  }
   // Works out the new { priority, folders } for a tap on a priority circle.
   // removeOnPlain2: tapping plain 2 on a 2P item takes it out of the Priority folder.
+  // Any priority other than 1 takes P and PP off.
   function resolvePriorityChoice(choice, curPriority, curFolders, removeOnPlain2) {
     let fl = folderListOf(curFolders).slice();
+    let pr = choice;
     if (choice === '2P') {
       ensurePriorityFolderExists();
       if (!fl.includes('Priority')) fl.push('Priority');
-      return { priority: 2, folders: fl };
+      pr = 2;
+    } else if (choice === 2 && removeOnPlain2 && priorityKey(curPriority, fl) === '2P') {
+      fl = fl.filter(f => !TAG_REMOVES.Priority.includes(f));
     }
-    if (choice === 2 && removeOnPlain2 && priorityKey(curPriority, fl) === '2P') {
-      fl = fl.filter(f => f !== 'Priority');
-      if (fl.length === 0) fl = ['General'];
-    }
-    return { priority: choice, folders: fl };
+    if (pr !== 1) fl = fl.filter(f => f !== 'P' && f !== 'PP');
+    if (fl.length === 0) fl = ['General'];
+    return { priority: pr, folders: fl };
   }
   function priorityDotHtml(p, checked, extraAttrs) {
     const is2P = p === '2P';
@@ -790,6 +843,7 @@
       }
     } catch (e) { reminders = []; folders = ['General']; }
     migrateStaleSuppressedFlags();
+    if (enforceTagRules(reminders, folders)) saveLocal();
     loaded = true;
   }
 
@@ -836,6 +890,7 @@
 
   function save() {
     allSynced = false;
+    enforceTagRules(reminders, folders);
     pruneAlarmQueue();
     saveLocal();
     if (accessToken) {
@@ -1026,8 +1081,9 @@
     const merged = mergeReminders(reminders, remote.reminders);
     const mergedFolders = mergeFolders(folders, remote.folders);
     const mergedHistory = mergeChangeHistory(changeHistory, remote.changeHistory);
-    const after = dataSignature(merged, mergedFolders, mergedHistory);
     const remoteSig = dataSignature(remote.reminders, remote.folders, remote.changeHistory);
+    enforceTagRules(merged, mergedFolders);
+    const after = dataSignature(merged, mergedFolders, mergedHistory);
     const localChanged = after !== before;
     if (localChanged) {
       reminders = merged;
@@ -1483,9 +1539,10 @@
   function deleteFolder(name) {
     if (name === 'General') return; // General is the permanent fallback bucket
     folders = folders.filter(f => f !== name);
+    const rmTags = TAG_REMOVES[name] || [name];
     reminders.forEach(r => {
       if (r.folders && r.folders.includes(name)) {
-        r.folders = r.folders.filter(f => f !== name);
+        r.folders = r.folders.filter(f => !rmTags.includes(f));
         if (r.folders.length === 0) r.folders = ['General'];
         r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title);
       }
@@ -1527,27 +1584,29 @@
   }
   function toggleFolderForContext(context, id, name) {
     if (context === 'add') {
-      if (addFolders.includes(name)) addFolders = addFolders.filter(f => f !== name);
-      else addFolders = addFolders.concat([name]);
+      if (tagTurnsOnP1(addFolders, name)) addPriority = 1;
+      addFolders = applyTagToggle(addFolders, name, false);
     } else if (context === 'filter') {
       if (folderFilterSelection.includes(name)) folderFilterSelection = folderFilterSelection.filter(f => f !== name);
       else folderFilterSelection = folderFilterSelection.concat([name]);
     } else if (context === 'bulk') {
-      if (bulkFolders.includes(name)) bulkFolders = bulkFolders.filter(f => f !== name);
-      else bulkFolders = bulkFolders.concat([name]);
+      bulkFolders = applyTagToggle(bulkFolders, name, false);
     } else if (context === 'alarmeditdraft') {
       const cur = alarmEditFolders || ['General'];
-      alarmEditFolders = cur.includes(name) ? cur.filter(f => f !== name) : cur.concat([name]);
+      if (tagTurnsOnP1(cur, name)) alarmEditPriority = 1;
+      alarmEditFolders = applyTagToggle(cur, name, false);
     } else if (context === 'editdraft') {
       // Inline Edit: only touches the draft in memory — the real reminder
       // isn't changed (and won't disappear from a filtered view) until Save.
       const cur = liveEditFolders || ['General'];
-      liveEditFolders = cur.includes(name) ? cur.filter(f => f !== name) : cur.concat([name]);
+      if (tagTurnsOnP1(cur, name)) liveEditPriority = 1;
+      liveEditFolders = applyTagToggle(cur, name, false);
     } else {
       const r = reminders.find(r => r.id === id);
       if (!r) return;
-      const cur = (r.folders && r.folders.length) ? r.folders.slice() : ['General'];
-      r.folders = cur.includes(name) ? cur.filter(f => f !== name) : cur.concat([name]);
+      const cur = folderListOf(r.folders);
+      if (tagTurnsOnP1(cur, name)) r.priority = 1;
+      r.folders = applyTagToggle(cur, name, false);
       r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title);
       save();
     }
@@ -1575,36 +1634,24 @@
     render();
   }
   function toggleQuickFolderShortcut(context, id, name) {
-    if (!folders.some(f => f.toLowerCase() === name.toLowerCase())) folders.push(name);
+    ensureFolderExists(name);
     if (context === 'add') {
-      if (addFolders.includes(name)) addFolders = addFolders.filter(f => f !== name);
-      else addFolders = addFolders.concat([name]);
+      if (tagTurnsOnP1(addFolders, name)) addPriority = 1;
+      addFolders = applyTagToggle(addFolders, name, false);
     } else if (context === 'alarmeditdraft') {
       const cur = alarmEditFolders || ['General'];
-      if (cur.includes(name)) {
-        alarmEditFolders = cur.filter(f => f !== name);
-        if (alarmEditFolders.length === 0) alarmEditFolders = ['General'];
-      } else {
-        alarmEditFolders = cur.concat([name]);
-      }
+      if (tagTurnsOnP1(cur, name)) alarmEditPriority = 1;
+      alarmEditFolders = applyTagToggle(cur, name, true);
     } else if (context === 'editdraft') {
       const cur = liveEditFolders || ['General'];
-      if (cur.includes(name)) {
-        liveEditFolders = cur.filter(f => f !== name);
-        if (liveEditFolders.length === 0) liveEditFolders = ['General'];
-      } else {
-        liveEditFolders = cur.concat([name]);
-      }
+      if (tagTurnsOnP1(cur, name)) liveEditPriority = 1;
+      liveEditFolders = applyTagToggle(cur, name, true);
     } else {
       const r = reminders.find(r => r.id === id);
       if (!r) return;
-      const cur = (r.folders && r.folders.length) ? r.folders.slice() : ['General'];
-      if (cur.includes(name)) {
-        r.folders = cur.filter(f => f !== name);
-        if (r.folders.length === 0) r.folders = ['General'];
-      } else {
-        r.folders = cur.concat([name]);
-      }
+      const cur = folderListOf(r.folders);
+      if (tagTurnsOnP1(cur, name)) r.priority = 1;
+      r.folders = applyTagToggle(cur, name, true);
       r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title);
       save();
     }
@@ -1612,7 +1659,7 @@
   }
   function renderFolderShortcuts(context, id, currentFolders, redPriorityPill) {
     const selected = (currentFolders && currentFolders.length) ? currentFolders : ['General'];
-    const shortcutNames = ['P', 'Priority', 'Praveen', 'B+'];
+    const shortcutNames = ['PP', 'P', 'Priority', 'Praveen', 'B+'];
     return `
       <div class="folder-shortcut-row">
         ${shortcutNames.map(name => {
@@ -1712,7 +1759,7 @@
     selectMode = false;
     topToggleOn = false;
     praveenToggleOn = false;
-    pBothToggleOn = false;
+    pBothToggleOn = false; ppToggleOn = false;
     render();
   }
   function applyBulkSnooze(minutes) {
@@ -1964,6 +2011,11 @@
       // "P" header button: show only reminders tagged with the P pill.
       const pFolders = (r.folders && r.folders.length) ? r.folders : ['General'];
       if (!pFolders.includes('P')) return false;
+    }
+    if (ppToggleOn) {
+      // "PP" header button: show only reminders tagged with the PP pill.
+      const ppFolders = (r.folders && r.folders.length) ? r.folders : ['General'];
+      if (!ppFolders.includes('PP')) return false;
     }
     if (folderFilterSelection.length) {
       const rFolders = (r.folders && r.folders.length) ? r.folders : ['General'];
@@ -2251,12 +2303,14 @@
   }
 
   // One ranking shared by the due popup and every list sort.
-  // Groups: 1 + Priority folder, 1, 2P, 2, 3 + Priority folder, 3, … 5.
+  // Groups: PP, P, 1 + Priority folder, 1, 2P, 2, 3 + Priority folder, 3, … 5.
   // Praveen/B+ tags are ignored: inside each group, order is by due time only.
   function queueRank(r) {
     const fl = (r.folders && r.folders.length) ? r.folders : ['General'];
+    if (fl.includes('PP')) return 0;
+    if (fl.includes('P')) return 1;
     const p = Math.min(Math.max(r.priority || 3, 1), 5);
-    return (p - 1) * 2 + (fl.includes('Priority') ? 0 : 1);
+    return 2 + (p - 1) * 2 + (fl.includes('Priority') ? 0 : 1);
   }
   function listRank(r) { return queueRank(r); }
   function sortList(list) {
@@ -2377,6 +2431,7 @@
             <button class="pill-btn trash-toggle priority-header-btn ${topToggleOn ? 'active' : ''}" id="top-priority-btn" title="Priority folder, Priority 1">Priority</button>
             <button class="pill-btn trash-toggle ${praveenToggleOn ? 'active' : ''}" id="praveen-folder-toggle-btn" title="Praveen folder"${praveenToggleOn ? ' style="background:#FFE600; color:#000000;"' : ''}>Praveen</button>
             <button class="search-toggle-btn ${pBothToggleOn ? 'active' : ''}" id="p-both-toggle-btn" title="Show reminders marked P" style="font-weight:700; font-family:'IBM Plex Sans',sans-serif;">P</button>
+            <button class="search-toggle-btn ${ppToggleOn ? 'active' : ''}" id="pp-toggle-btn" title="Show reminders marked PP" style="font-weight:700; font-size:12px; font-family:'IBM Plex Sans',sans-serif;">PP</button>
             <input type="file" id="import-excel-input" accept=".xlsx,.xls" style="position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;" />
           </div>
         </div>
@@ -2597,7 +2652,7 @@
   let lastListFilterKey = '';
   function renderLists(active, done) {
     // Start back at the first page whenever the filters/search change.
-    const filterKey = [searchQuery, priorityFilter, dateFilterMode, folderFilterSelection.join('|'), dueStateFilter, sortMode, pBothToggleOn].join('~');
+    const filterKey = [searchQuery, priorityFilter, dateFilterMode, folderFilterSelection.join('|'), dueStateFilter, sortMode, pBothToggleOn, ppToggleOn].join('~');
     if (filterKey !== lastListFilterKey) { lastListFilterKey = filterKey; listLimit = LIST_PAGE; }
     if (active.length === 0 && done.length === 0) {
       if (searchQuery.trim()) {
@@ -2874,7 +2929,7 @@
     `;
   }
   function goToTopPriority() {
-    pBothToggleOn = false;
+    pBothToggleOn = false; ppToggleOn = false;
     topToggleOn = true;
     praveenToggleOn = false;
     viewingFolders = false;
@@ -2895,7 +2950,7 @@
     }
   }
   function goToPraveenFolder() {
-    pBothToggleOn = false;
+    pBothToggleOn = false; ppToggleOn = false;
     praveenToggleOn = true;
     topToggleOn = false;
     viewingFolders = false;
@@ -2917,6 +2972,7 @@
   }
   function goToPBoth() {
     pBothToggleOn = true;
+    ppToggleOn = false;
     topToggleOn = false;
     praveenToggleOn = false;
     viewingFolders = false;
@@ -2930,14 +2986,36 @@
   }
   function togglePBothButton() {
     if (pBothToggleOn) {
-      pBothToggleOn = false;
+      pBothToggleOn = false; ppToggleOn = false;
       deselectAllAndReset();
     } else {
       goToPBoth();
     }
   }
-  function viewFolderReminders(name) {
+  function goToPP() {
+    ppToggleOn = true;
     pBothToggleOn = false;
+    topToggleOn = false;
+    praveenToggleOn = false;
+    viewingFolders = false;
+    viewingTrash = false;
+    viewingChangeHistory = false;
+    desktopNav = 'dashboard';
+    folderFilterSelection = [];
+    priorityFilter = null; // show every priority
+    dueStateFilter = null;
+    render();
+  }
+  function togglePPButton() {
+    if (ppToggleOn) {
+      ppToggleOn = false;
+      deselectAllAndReset();
+    } else {
+      goToPP();
+    }
+  }
+  function viewFolderReminders(name) {
+    pBothToggleOn = false; ppToggleOn = false;
     viewingFolders = false;
     viewingTrash = false;
     viewingChangeHistory = false;
@@ -3313,6 +3391,8 @@
     if (sidebarPraveenToggle) sidebarPraveenToggle.addEventListener('click', togglePraveenButton);
     const pBothToggleBtn = document.getElementById('p-both-toggle-btn');
     if (pBothToggleBtn) pBothToggleBtn.addEventListener('click', togglePBothButton);
+    const ppToggleBtn = document.getElementById('pp-toggle-btn');
+    if (ppToggleBtn) ppToggleBtn.addEventListener('click', togglePPButton);
     const createFolderBtn = document.getElementById('create-folder-btn');
     const newFolderInput = document.getElementById('new-folder-input');
     if (createFolderBtn && newFolderInput) {
