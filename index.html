@@ -1802,11 +1802,19 @@
     }
     return msg;
   }
+  // Phone → wa.me opens the WhatsApp app. Laptop → straight to WhatsApp
+  // Web (wa.me on a laptop tries the Windows app first and can hang).
+  const IS_PHONE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || !!(navigator.userAgentData && navigator.userAgentData.mobile);
   function waLink(r, person) {
-    return `https://wa.me/${person.phone}?text=${encodeURIComponent(waMessage(r, person))}`;
+    const text = encodeURIComponent(waMessage(r, person));
+    return IS_PHONE
+      ? `https://wa.me/${person.phone}?text=${text}`
+      : `https://web.whatsapp.com/send?phone=${person.phone}&text=${text}`;
   }
   function waAnchorHtml(r, person, label) {
-    return `<a class="wa-btn" href="${waLink(r, person)}" target="_blank" rel="noopener" data-wa-rid="${r.id}" data-wa-pid="${person.id}">${label}</a>`;
+    // On a laptop every send reuses one "WhatsApp" tab instead of opening a new one each time.
+    const target = IS_PHONE ? '_blank' : 'reminders_whatsapp_web';
+    return `<a class="wa-btn" href="${waLink(r, person)}" target="${target}" rel="noopener" data-wa-rid="${r.id}" data-wa-pid="${person.id}">${label}</a>`;
   }
   // Button(s) for a card or the due popup. One person → opens the chat
   // directly; several → a "WhatsApp" button that shows each name.
