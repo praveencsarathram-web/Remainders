@@ -484,6 +484,21 @@
   .snooze-grid-alarm { grid-template-columns: repeat(4, 1fr); }
   .snooze-btn { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 6px 4px; font-size: 11.5px; color: var(--ink); cursor: pointer; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; }
   .snooze-btn.active { background: var(--ember); color: #ffffff; border-color: var(--ember); }
+  .wa-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+    background: #25D366; color: #ffffff !important; text-decoration: none; border: none; border-radius: 8px;
+    padding: 6px 10px; font-size: 11.5px; font-weight: 600; cursor: pointer;
+    font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; white-space: nowrap;
+  }
+  .wa-btn:active { background: #1ebe5b; }
+  .wa-people-line { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 11.5px; color: var(--ink); margin-top: 4px; }
+  .wa-sent-line { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 11px; color: #1a8f4c; margin-top: 2px; }
+  .wa-choose-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .person-add-row { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .person-add-row input {
+    flex: 1 1 140px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px;
+    font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; color: var(--ink); background: var(--paper);
+  }
   .queue-note { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 11px; color: var(--muted); margin-top: 12px; }
 </style>
 </head>
@@ -545,6 +560,20 @@
   let voiceListeningFor = null; // id of the input currently being dictated into, or null
   let speechRecognizer = null;
   let editingFolderName = null;
+  // WhatsApp people
+  let people = []; // [{ id, name, phone, deleted, updated }] — synced with reminders
+  let viewingPeople = false;
+  let editingPersonId = null;
+  let newPersonError = '';
+  let newPersonName = '';
+  let newPersonPhone = '';
+  let editPersonName = '';
+  let editPersonPhone = '';
+  let pendingDeletePersonId = null;
+  let addPeople = [];
+  let liveEditPeople = null;
+  let alarmEditPeople = null;
+  let waChooserFor = null; // reminder id whose "send to which person" list is open
   let pendingDeleteFolderName = null;
   let showDeleteFolderConfirm = false;
   let showDeleteConfirm = false;
@@ -823,7 +852,7 @@
   let dataRevision = 0;
   function saveLocal() {
     dataRevision++;
-    try { localStorage.setItem(LOCAL_KEY, JSON.stringify({ reminders, folders, changeHistory })); }
+    try { localStorage.setItem(LOCAL_KEY, JSON.stringify({ reminders, folders, changeHistory, people })); }
     catch (e) { console.error('Local save failed', e); }
   }
   function loadLocal() {
@@ -839,6 +868,7 @@
           reminders = Array.isArray(parsed.reminders) ? parsed.reminders : [];
           folders = (Array.isArray(parsed.folders) && parsed.folders.length) ? parsed.folders : ['General'];
           changeHistory = Array.isArray(parsed.changeHistory) ? parsed.changeHistory : [];
+          people = Array.isArray(parsed.people) ? parsed.people : [];
         }
       }
     } catch (e) { reminders = []; folders = ['General']; }
@@ -1060,35 +1090,50 @@
 
   // Order-independent signature of the data, so two devices that hold the
   // same reminders in a different order don't keep re-uploading forever.
-  function dataSignature(rems, folds, hist) {
+  function dataSignature(rems, folds, hist, ppl) {
     const r = rems.map(x => x.id + ':' + (x.version || 1) + ':' + (x.updated || 0)).sort().join(',');
     const f = folds.slice().sort().join(',');
     const h = hist.map(e => e.id + '|' + e.at).sort().join(',');
-    return r + '#' + f + '#' + h;
+    const pp = (ppl || []).map(x => x.id + ':' + (x.updated || 0)).sort().join(',');
+    return r + '#' + f + '#' + h + '#' + pp;
+  }
+  // People merge: newest edit wins; deleted people are kept as hidden
+  // markers so a deletion on one device spreads instead of coming back.
+  function mergePeople(local, remote) {
+    const byId = new Map();
+    (local || []).forEach(x => byId.set(x.id, x));
+    (remote || []).forEach(x => {
+      const cur = byId.get(x.id);
+      if (!cur || (x.updated || 0) > (cur.updated || 0)) byId.set(x.id, x);
+    });
+    return Array.from(byId.values());
   }
   function parseRemote(text) {
     const parsed = JSON.parse(text || '[]');
     return {
       reminders: Array.isArray(parsed) ? parsed : (Array.isArray(parsed.reminders) ? parsed.reminders : []),
       folders: Array.isArray(parsed) ? [] : (Array.isArray(parsed.folders) ? parsed.folders : []),
-      changeHistory: Array.isArray(parsed) ? [] : (Array.isArray(parsed.changeHistory) ? parsed.changeHistory : [])
+      changeHistory: Array.isArray(parsed) ? [] : (Array.isArray(parsed.changeHistory) ? parsed.changeHistory : []),
+      people: Array.isArray(parsed) ? [] : (Array.isArray(parsed.people) ? parsed.people : [])
     };
   }
   // Merges Drive's copy into this device. Returns whether this device
   // changed, and whether Drive is missing anything this device has.
   function mergeRemote(remote) {
-    const before = dataSignature(reminders, folders, changeHistory);
+    const before = dataSignature(reminders, folders, changeHistory, people);
     const merged = mergeReminders(reminders, remote.reminders);
     const mergedFolders = mergeFolders(folders, remote.folders);
     const mergedHistory = mergeChangeHistory(changeHistory, remote.changeHistory);
-    const remoteSig = dataSignature(remote.reminders, remote.folders, remote.changeHistory);
+    const mergedPeople = mergePeople(people, remote.people);
+    const remoteSig = dataSignature(remote.reminders, remote.folders, remote.changeHistory, remote.people);
     enforceTagRules(merged, mergedFolders);
-    const after = dataSignature(merged, mergedFolders, mergedHistory);
+    const after = dataSignature(merged, mergedFolders, mergedHistory, mergedPeople);
     const localChanged = after !== before;
     if (localChanged) {
       reminders = merged;
       folders = mergedFolders;
       changeHistory = mergedHistory;
+      people = mergedPeople;
       migrateStaleSuppressedFlags();
       pruneAlarmQueue();
       saveLocal();
@@ -1117,7 +1162,7 @@
         if (result.remoteBehind) await pushToDrive();
         else lastRemoteVersion = await getRemoteVersion();
       } else {
-        driveFileId = await createDriveFile(JSON.stringify({ reminders, folders, changeHistory }));
+        driveFileId = await createDriveFile(JSON.stringify({ reminders, folders, changeHistory, people }));
         lastRemoteVersion = await getRemoteVersion();
       }
       allSynced = true;
@@ -1140,7 +1185,7 @@
       setDriveStatus('syncing');
       if (!driveFileId) {
         const file = await findDriveFile();
-        driveFileId = file ? file.id : await createDriveFile(JSON.stringify({ reminders, folders, changeHistory }));
+        driveFileId = file ? file.id : await createDriveFile(JSON.stringify({ reminders, folders, changeHistory, people }));
       }
       // If another device wrote since we last looked, fold its changes in
       // first so this upload never wipes them out.
@@ -1151,7 +1196,7 @@
           if (res.localChanged) render();
         }
       }
-      const payload = JSON.stringify({ reminders, folders, changeHistory });
+      const payload = JSON.stringify({ reminders, folders, changeHistory, people });
       const newVersion = await updateDriveFile(driveFileId, payload);
       lastRemoteVersion = newVersion !== null ? newVersion : await getRemoteVersion();
       markSynced();
@@ -1271,7 +1316,7 @@
   /* =========================================================
      REMINDER LOGIC
      ========================================================= */
-  function addReminder(title, when, priority, folderList) {
+  function addReminder(title, when, priority, folderList, personIds) {
     reminders.unshift({
       id: 'r' + Date.now() + Math.random().toString(36).slice(2, 7),
       title: title.trim(),
@@ -1283,6 +1328,7 @@
       trashed: false,
       trashedAt: null,
       folders: (folderList && folderList.length) ? folderList.slice() : ['General'],
+      people: (personIds || []).slice(),
       version: 1,
       created: Date.now(),
       updated: Date.now()
@@ -1294,6 +1340,7 @@
     showAddPopup = true;
     addPriority = 1;
     addFolders = ['General'];
+    addPeople = [];
     openFolderPicker = null;
     addAnchorTime = new Date().toISOString();
     render();
@@ -1338,7 +1385,7 @@
     const priority = addPriority;
     const folderList = addFolders;
     showAddPopup = false;
-    addReminder(title, when, priority, folderList);
+    addReminder(title, when, priority, folderList, addPeople);
   }
   let changeHistory = []; // persisted locally and synced via Drive, same as reminders/folders
   function logChange(id, title) {
@@ -1430,6 +1477,7 @@
     liveEditTime = null;
     liveEditPriority = r ? (r.priority || 3) : 3;
     liveEditFolders = r ? ((r.folders && r.folders.length) ? r.folders.slice() : ['General']) : ['General'];
+    liveEditPeople = r ? (r.people || []).slice() : [];
     editAnchorTime = (r && r.when) ? r.when : new Date().toISOString();
     render();
   }
@@ -1439,6 +1487,7 @@
     liveEditTime = null;
     liveEditPriority = null;
     liveEditFolders = null;
+    liveEditPeople = null;
     editAnchorTime = null;
     render();
   }
@@ -1455,6 +1504,7 @@
       r.when = whenValue ? new Date(whenValue).toISOString() : null;
       if (liveEditPriority) r.priority = liveEditPriority;
       if (liveEditFolders) r.folders = liveEditFolders;
+      if (liveEditPeople) r.people = liveEditPeople.slice();
       r.suppressedUntil = null;
       r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title);
     }
@@ -1463,6 +1513,7 @@
     liveEditTime = null;
     liveEditPriority = null;
     liveEditFolders = null;
+    liveEditPeople = null;
     editAnchorTime = null;
     save();
     render();
@@ -1487,7 +1538,7 @@
   function toggleViewFolders() {
     viewingFolders = !viewingFolders;
     desktopNav = viewingFolders ? 'folders' : 'dashboard';
-    if (viewingFolders) { showSettings = false; selectMode = false; viewingTrash = false; viewingChangeHistory = false; }
+    if (viewingFolders) { showSettings = false; selectMode = false; viewingTrash = false; viewingChangeHistory = false; viewingPeople = false; }
     newFolderError = '';
     newFolderDraft = '';
     editingFolderName = null;
@@ -1727,6 +1778,213 @@
       </div>
     `;
   }
+  /* ---------------- WhatsApp people ---------------- */
+  function normalizePhone(raw) {
+    let d = String(raw || '').replace(/\D/g, '');
+    if (d.startsWith('00')) d = d.slice(2);
+    if (d.length === 8) d = '968' + d; // no country code → Oman
+    return d;
+  }
+  function livePeople() {
+    return people.filter(x => !x.deleted).sort((a, b) => a.name.localeCompare(b.name));
+  }
+  function personById(id) { return people.find(x => x.id === id && !x.deleted) || null; }
+  function linkedPeople(ids) { return (ids || []).map(personById).filter(Boolean); }
+  function waMessage(r, person) {
+    let msg = `Hi ${person.name}, reminder: ${r.title}.`;
+    if (r.when) {
+      const d = new Date(r.when);
+      if (!isNaN(d)) {
+        const day = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+        const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+        msg += ` Due ${day}, ${time}.`;
+      }
+    }
+    return msg;
+  }
+  function waLink(r, person) {
+    return `https://wa.me/${person.phone}?text=${encodeURIComponent(waMessage(r, person))}`;
+  }
+  function waAnchorHtml(r, person, label) {
+    return `<a class="wa-btn" href="${waLink(r, person)}" target="_blank" rel="noopener" data-wa-rid="${r.id}" data-wa-pid="${person.id}">${label}</a>`;
+  }
+  // Button(s) for a card or the due popup. One person → opens the chat
+  // directly; several → a "WhatsApp" button that shows each name.
+  function waButtonHtml(r) {
+    const linked = linkedPeople(r.people);
+    if (!linked.length) return '';
+    if (linked.length === 1) return waAnchorHtml(r, linked[0], 'WhatsApp');
+    return `<button type="button" class="wa-btn" data-wa-chooser="${r.id}">WhatsApp &#9662;</button>`;
+  }
+  function waChooserHtml(r) {
+    const linked = linkedPeople(r.people);
+    if (linked.length < 2 || waChooserFor !== r.id) return '';
+    return `<div class="wa-choose-row">${linked.map(pp => waAnchorHtml(r, pp, escapeHtml(pp.name))).join('')}</div>`;
+  }
+  function waInfoHtml(r) {
+    const linked = linkedPeople(r.people);
+    if (!linked.length) return '';
+    const sent = r.waSent || {};
+    const sentParts = linked.filter(pp => sent[pp.id]).map(pp => `${escapeHtml(pp.name)} ${fmtSyncedTime(sent[pp.id])}`);
+    return `<div class="wa-people-line">&#128100; ${linked.map(pp => escapeHtml(pp.name)).join(', ')}</div>` +
+      (sentParts.length ? `<div class="wa-sent-line">&#10003; WhatsApp sent to ${sentParts.join(', ')}</div>` : '');
+  }
+  function recordWaSent(rid, pid) {
+    const r = reminders.find(x => x.id === rid);
+    if (!r) return;
+    r.waSent = Object.assign({}, r.waSent || {}, { [pid]: Date.now() });
+    r.updated = Date.now(); r.version = (r.version || 1) + 1;
+    waChooserFor = null;
+    save();
+    render();
+  }
+  function toggleWaChooser(rid) {
+    waChooserFor = (waChooserFor === rid) ? null : rid;
+    render();
+  }
+  function peopleDraftFor(context) {
+    if (context === 'add') return addPeople;
+    if (context === 'editdraft') return liveEditPeople || [];
+    if (context === 'alarmeditdraft') return alarmEditPeople || [];
+    return [];
+  }
+  function togglePersonForContext(context, pid) {
+    const cur = peopleDraftFor(context);
+    const next = cur.includes(pid) ? cur.filter(x => x !== pid) : cur.concat([pid]);
+    if (context === 'add') addPeople = next;
+    else if (context === 'editdraft') liveEditPeople = next;
+    else if (context === 'alarmeditdraft') alarmEditPeople = next;
+    render();
+  }
+  function renderPeoplePicker(context, id) {
+    const key = `people-${context}:${id || ''}`;
+    const isOpen = openFolderPicker === key;
+    const selected = peopleDraftFor(context).filter(pid => personById(pid));
+    const names = linkedPeople(selected).map(pp => pp.name);
+    const label = names.length === 0 ? 'No one' : (names.length === 1 ? names[0] : `${names[0]} +${names.length - 1} more`);
+    const list = livePeople();
+    return `
+      <div class="folder-picker-wrap">
+        <button type="button" class="folder-picker-btn" data-folder-picker-toggle="${key}">&#128100; ${escapeHtml(label)} &#9662;</button>
+        ${isOpen ? `
+          <div class="folder-picker-panel">
+            <div class="folder-picker-list">
+              ${list.length ? list.map(pp => `
+                <label class="folder-picker-item">
+                  <input type="checkbox" data-person-toggle-context="${context}" data-person-toggle-id="${pp.id}" ${selected.includes(pp.id) ? 'checked' : ''} />
+                  ${escapeHtml(pp.name)}
+                </label>
+              `).join('') : `<p class="snooze-label" style="margin:4px 2px;">No people yet — add them with the &#128100; People button.</p>`}
+            </div>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+  function addPerson() {
+    const name = newPersonName.trim();
+    const phone = normalizePhone(newPersonPhone);
+    if (!name) { newPersonError = 'Enter a name.'; render(); return; }
+    if (phone.length < 10 || phone.length > 15) { newPersonError = 'Enter a valid WhatsApp number.'; render(); return; }
+    if (livePeople().some(x => x.name.toLowerCase() === name.toLowerCase())) { newPersonError = 'That name is already in People.'; render(); return; }
+    people.push({ id: 'p' + Date.now() + Math.random().toString(36).slice(2, 7), name, phone, deleted: false, updated: Date.now() });
+    newPersonName = ''; newPersonPhone = ''; newPersonError = '';
+    save();
+    render();
+  }
+  function startEditPerson(pid) {
+    const pp = personById(pid);
+    if (!pp) return;
+    editingPersonId = pid; editPersonName = pp.name; editPersonPhone = '+' + pp.phone; newPersonError = '';
+    render();
+  }
+  function savePerson(pid) {
+    const pp = personById(pid);
+    if (!pp) return;
+    const name = editPersonName.trim();
+    const phone = normalizePhone(editPersonPhone);
+    if (!name) { newPersonError = 'Enter a name.'; render(); return; }
+    if (phone.length < 10 || phone.length > 15) { newPersonError = 'Enter a valid WhatsApp number.'; render(); return; }
+    if (livePeople().some(x => x.id !== pid && x.name.toLowerCase() === name.toLowerCase())) { newPersonError = 'That name is already in People.'; render(); return; }
+    pp.name = name; pp.phone = phone; pp.updated = Date.now();
+    editingPersonId = null; newPersonError = '';
+    save();
+    render();
+  }
+  function confirmDeletePerson() {
+    const pp = personById(pendingDeletePersonId);
+    if (pp) { pp.deleted = true; pp.updated = Date.now(); save(); }
+    pendingDeletePersonId = null;
+    render();
+  }
+  function toggleViewPeople() {
+    viewingPeople = !viewingPeople;
+    desktopNav = viewingPeople ? 'people' : 'dashboard';
+    if (viewingPeople) { showSettings = false; selectMode = false; viewingFolders = false; viewingTrash = false; viewingChangeHistory = false; }
+    editingPersonId = null; newPersonError = '';
+    render();
+  }
+  function renderPeopleView() {
+    const list = livePeople();
+    return `
+      <div class="trash-header-row">
+        <p class="trash-count-label">${list.length} ${list.length === 1 ? 'person' : 'people'} &middot; numbers without a country code are treated as Oman (+968)</p>
+      </div>
+      <div class="person-add-row">
+        <input type="text" id="new-person-name" placeholder="Name" value="${escapeHtml(newPersonName)}" />
+        <input type="tel" id="new-person-phone" placeholder="WhatsApp number" value="${escapeHtml(newPersonPhone)}" />
+        <button class="pill-btn select-toggle" data-person-add="1">Add</button>
+      </div>
+      ${newPersonError ? `<p class="folder-error-note">${escapeHtml(newPersonError)}</p>` : ''}
+      ${list.length === 0 ? `<div class="empty-state">No people yet.</div>` : `
+      <div class="reminder-list">
+        ${list.map(pp => {
+          const count = reminders.filter(r => !r.trashed && (r.people || []).includes(pp.id)).length;
+          if (editingPersonId === pp.id) {
+            return `
+            <div class="reminder trash-item">
+              <div class="reminder-body">
+                <input type="text" class="edit-title-input" id="edit-person-name" value="${escapeHtml(editPersonName)}" />
+                <input type="tel" class="edit-time-input" id="edit-person-phone" value="${escapeHtml(editPersonPhone)}" />
+              </div>
+              <div style="display:flex; flex-direction:column; gap:6px;">
+                <button class="edit-btn" data-person-save="${pp.id}">Save</button>
+                <button class="edit-btn" data-person-cancel="1">Cancel</button>
+              </div>
+            </div>`;
+          }
+          return `
+          <div class="reminder trash-item">
+            <div class="reminder-body">
+              <p class="reminder-title">${escapeHtml(pp.name)}</p>
+              <div class="reminder-time">+${escapeHtml(pp.phone)} &middot; ${count} reminder${count === 1 ? '' : 's'}</div>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:6px;">
+              <button class="edit-btn" data-person-edit="${pp.id}">Edit</button>
+              <button class="edit-btn" style="background:var(--ember-soft); color:var(--ember);" data-person-delete="${pp.id}">Delete</button>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`}
+    `;
+  }
+  function renderDeletePersonConfirm() {
+    const pp = personById(pendingDeletePersonId);
+    if (!pp) return '';
+    return `
+      <div class="alarm-overlay">
+        <div class="alarm-card">
+          <div class="alarm-glyph" style="background:var(--ember-soft); color:var(--ember);">&#9888;</div>
+          <p class="alarm-title">Delete "${escapeHtml(pp.name)}" from People?</p>
+          <p class="alarm-time">Reminders linked to them will no longer show a WhatsApp button for them.</p>
+          <div class="alarm-actions">
+            <button class="alarm-done-btn" data-person-delete-confirm="1" style="background:var(--ember);">Delete</button>
+            <button class="alarm-dismiss-btn" data-person-delete-cancel="1">Cancel</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
   function removeReminder(id) {
     reminders = reminders.filter(r => r.id !== id);
     save();
@@ -1850,15 +2108,15 @@
   function toggleViewTrash() {
     viewingTrash = !viewingTrash;
     desktopNav = viewingTrash ? 'trash' : 'dashboard';
-    if (viewingTrash) { showSettings = false; selectMode = false; viewingFolders = false; viewingChangeHistory = false; }
+    if (viewingTrash) { showSettings = false; selectMode = false; viewingFolders = false; viewingChangeHistory = false; viewingPeople = false; }
     trashSelectMode = false;
     trashSelectedIds.clear();
     render();
   }
   function toggleViewChangeHistory() {
-    viewingChangeHistory = !viewingChangeHistory;
+    viewingChangeHistory = !viewingChangeHistory && !viewingPeople;
     desktopNav = viewingChangeHistory ? 'changes' : 'dashboard';
-    if (viewingChangeHistory) { showSettings = false; selectMode = false; viewingFolders = false; viewingTrash = false; }
+    if (viewingChangeHistory) { showSettings = false; selectMode = false; viewingFolders = false; viewingTrash = false; viewingPeople = false; }
     render();
   }
   function toggleTrashSelectMode() {
@@ -1933,6 +2191,7 @@
     alarmEditPriority = r ? (r.priority || 3) : 3;
     alarmEditAnchorTime = (r && r.when) ? r.when : new Date().toISOString();
     alarmEditFolders = r ? ((r.folders && r.folders.length) ? r.folders.slice() : ['General']) : ['General'];
+    alarmEditPeople = r ? (r.people || []).slice() : [];
     liveAlarmEditTitle = null;
     liveAlarmEditTime = null;
     render();
@@ -1973,6 +2232,7 @@
       r.when = timeEl.value ? new Date(timeEl.value).toISOString() : null;
       if (alarmEditPriority) r.priority = alarmEditPriority;
       if (alarmEditFolders) r.folders = alarmEditFolders.length ? alarmEditFolders : ['General'];
+      if (alarmEditPeople) r.people = alarmEditPeople.slice();
       r.suppressedUntil = null;
       r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title);
       save(); // also prunes the queue automatically if this is no longer due
@@ -1981,6 +2241,7 @@
     alarmEditPriority = null;
     alarmEditAnchorTime = null;
     alarmEditFolders = null;
+    alarmEditPeople = null;
     liveAlarmEditTitle = null;
     liveAlarmEditTime = null;
     if (lockedAlarmId === id && !alarmQueue.includes(id)) lockedAlarmId = null;
@@ -2055,6 +2316,7 @@
       Priority: r.priority || 3,
       Due: r.when ? new Date(r.when).toLocaleString() : 'No time set',
       Folder: (r.folders && r.folders.length) ? r.folders.join(', ') : 'General',
+      'Send to': linkedPeople(r.people).map(pp => pp.name).join(', '),
       Status: r.done ? 'Completed' : 'Active'
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -2074,6 +2336,7 @@
         const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
         let imported = 0;
         let skipped = 0;
+        const unknownNames = new Set();
         rows.forEach(row => {
           const title = String(row.Title || row.title || '').trim();
           if (!title) { skipped++; return; }
@@ -2100,6 +2363,13 @@
             if (!folders.some(existing => existing.toLowerCase() === f.toLowerCase())) folders.push(f);
           });
 
+          const rawSendTo = String(row['Send to'] ?? row['Send To'] ?? row['send to'] ?? '').trim();
+          const personIds = [];
+          rawSendTo.split(',').map(x => x.trim()).filter(Boolean).forEach(nm => {
+            const match = livePeople().find(pp => pp.name.toLowerCase() === nm.toLowerCase());
+            if (match) { if (!personIds.includes(match.id)) personIds.push(match.id); }
+            else unknownNames.add(nm);
+          });
           const rawStatus = String(row.Status ?? row.status ?? '').trim().toLowerCase();
           const done = rawStatus === 'completed';
 
@@ -2114,6 +2384,7 @@
             trashed: false,
             trashedAt: null,
             folders: folderList,
+            people: personIds,
             version: 1,
             created: Date.now(),
             updated: Date.now()
@@ -2122,7 +2393,7 @@
         });
         save();
         render();
-        alert(`Imported ${imported} reminder${imported === 1 ? '' : 's'}.${skipped ? ` Skipped ${skipped} row${skipped === 1 ? '' : 's'} with no title.` : ''}`);
+        alert(`Imported ${imported} reminder${imported === 1 ? '' : 's'}.${skipped ? ` Skipped ${skipped} row${skipped === 1 ? '' : 's'} with no title.` : ''}${unknownNames.size ? ` These "Send to" names aren't in People, so they weren't linked: ${Array.from(unknownNames).join(', ')}.` : ''}`);
       } catch (err) {
         alert('Could not read that Excel file: ' + (err.message || err));
       }
@@ -2131,7 +2402,7 @@
   }
 
   function downloadBackup() {
-    const blob = new Blob([JSON.stringify({ reminders, folders, changeHistory }, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ reminders, folders, changeHistory, people }, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -2147,7 +2418,7 @@
     reader.onload = () => {
       try {
         const restored = JSON.parse(reader.result);
-        let restoredReminders, restoredFolders, restoredChangeHistory;
+        let restoredReminders, restoredFolders, restoredChangeHistory, restoredPeople = [];
         if (Array.isArray(restored)) {
           restoredReminders = restored;
           restoredFolders = [];
@@ -2156,12 +2427,14 @@
           restoredReminders = restored.reminders;
           restoredFolders = Array.isArray(restored.folders) ? restored.folders : [];
           restoredChangeHistory = Array.isArray(restored.changeHistory) ? restored.changeHistory : [];
+          restoredPeople = Array.isArray(restored.people) ? restored.people : [];
         } else {
           throw new Error('Not a valid backup file');
         }
         reminders = mergeReminders(reminders, restoredReminders);
         folders = mergeFolders(folders, restoredFolders);
         changeHistory = mergeChangeHistory(changeHistory, restoredChangeHistory);
+        people = mergePeople(people, restoredPeople);
         save();
         render();
       } catch (e) {
@@ -2421,12 +2694,13 @@
             <button class="pill-btn trash-toggle ${viewingChangeHistory ? 'active' : ''}" id="change-history-toggle-btn" title="Recently changed reminders">&#128221; Changes${changeHistory.length ? ` (${changeHistory.length})` : ''}</button>
           </div>
           <div class="header-right-row">
-            ${!viewingTrash && !viewingFolders && !viewingChangeHistory && visibleCount ? `<button class="search-toggle-btn ${showSearchBar ? 'active' : ''}" id="search-toggle-btn" title="${showSearchBar ? 'Hide search' : 'Search'}">\ud83d\udd0d</button>` : ''}
-            ${!viewingTrash && !viewingFolders && !viewingChangeHistory && visibleCount ? `<button class="pill-btn select-toggle" id="select-toggle">${selectMode ? 'Cancel' : 'Select'}</button>` : ''}
-            ${!viewingTrash && !viewingFolders && !viewingChangeHistory && selectMode ? `<button class="pill-btn select-toggle" id="select-all-btn">Select all</button>` : ''}
-            ${!viewingTrash && !viewingFolders && !viewingChangeHistory && selectMode ? `<button class="pill-btn select-toggle" id="deselect-all-btn">Deselect all</button>` : ''}
+            ${!viewingTrash && !viewingFolders && !viewingChangeHistory && !viewingPeople && visibleCount ? `<button class="search-toggle-btn ${showSearchBar ? 'active' : ''}" id="search-toggle-btn" title="${showSearchBar ? 'Hide search' : 'Search'}">\ud83d\udd0d</button>` : ''}
+            ${!viewingTrash && !viewingFolders && !viewingChangeHistory && !viewingPeople && visibleCount ? `<button class="pill-btn select-toggle" id="select-toggle">${selectMode ? 'Cancel' : 'Select'}</button>` : ''}
+            ${!viewingTrash && !viewingFolders && !viewingChangeHistory && !viewingPeople && selectMode ? `<button class="pill-btn select-toggle" id="select-all-btn">Select all</button>` : ''}
+            ${!viewingTrash && !viewingFolders && !viewingChangeHistory && !viewingPeople && selectMode ? `<button class="pill-btn select-toggle" id="deselect-all-btn">Deselect all</button>` : ''}
             <button class="pill-btn trash-toggle ${viewingTrash ? 'active' : ''}" id="trash-toggle-btn" title="Trash">&#128465; Trash${trashCount ? ` (${trashCount})` : ''}</button>
             <button class="pill-btn trash-toggle ${viewingFolders ? 'active' : ''}" id="folders-toggle-btn" title="Folders">&#128193; Folders</button>
+            <button class="pill-btn trash-toggle ${viewingPeople ? 'active' : ''}" id="people-toggle-btn" title="People for WhatsApp reminders">&#128100; People</button>
             <button class="pill-btn trash-toggle" id="import-excel-btn" title="Import reminders from Excel">&#128229; Import</button>
             <button class="pill-btn trash-toggle priority-header-btn ${topToggleOn ? 'active' : ''}" id="top-priority-btn" title="Priority folder, Priority 1">Priority</button>
             <button class="pill-btn trash-toggle ${praveenToggleOn ? 'active' : ''}" id="praveen-folder-toggle-btn" title="Praveen folder"${praveenToggleOn ? ' style="background:#FFE600; color:#000000;"' : ''}>Praveen</button>
@@ -2436,19 +2710,19 @@
           </div>
         </div>
       </div>
-      ${!viewingFolders && !viewingChangeHistory ? `<p class="subtitle">A quiet place to keep track of what's next.</p>` : ''}
-      ${!viewingFolders && !viewingChangeHistory ? `<p class="desktop-greeting">${getGreeting()}</p>` : ''}
+      ${!viewingFolders && !viewingChangeHistory && !viewingPeople ? `<p class="subtitle">A quiet place to keep track of what's next.</p>` : ''}
+      ${!viewingFolders && !viewingChangeHistory && !viewingPeople ? `<p class="desktop-greeting">${getGreeting()}</p>` : ''}
 
-      ${!selectMode && !viewingTrash && !viewingFolders && !viewingChangeHistory ? `
+      ${!selectMode && !viewingTrash && !viewingFolders && !viewingChangeHistory && !viewingPeople ? `
       <button class="add-trigger-btn" id="add-trigger-btn">+ Add reminder</button>` : ''}
 
       
 
-      ${!viewingTrash && !viewingFolders && !viewingChangeHistory ? renderDashboardStats() : ''}
+      ${!viewingTrash && !viewingFolders && !viewingChangeHistory && !viewingPeople ? renderDashboardStats() : ''}
       ${!viewingFolders ? renderSyncStatus() : ''}
       ${showSettings ? renderSettings() : ''}
 
-      ${viewingTrash ? renderTrashView() : (viewingFolders ? renderFoldersView() : (viewingChangeHistory ? renderChangeHistoryView() : (visibleCount ? `
+      ${viewingTrash ? renderTrashView() : (viewingFolders ? renderFoldersView() : (viewingChangeHistory ? renderChangeHistoryView() : viewingPeople ? renderPeopleView() : (visibleCount ? `
       ${showSearchBar ? `
       <div class="search-bar">
         <input type="text" id="search-input" placeholder="Search reminders..." value="${escapeHtml(searchQuery)}" autofocus />
@@ -2473,7 +2747,7 @@
         ${renderFolderFilterPicker()}
       </div>` : '')))}
 
-      ${(viewingTrash || viewingFolders || viewingChangeHistory) ? '' : (!loaded ? '<div class="empty-state">Loading...</div>' : renderLists(active, done))}
+      ${(viewingTrash || viewingFolders || viewingChangeHistory || viewingPeople) ? '' : (!loaded ? '<div class="empty-state">Loading...</div>' : renderLists(active, done))}
 
       ${selectMode && selectedIds.size > 0 ? renderBulkBar() : ''}
       ${showAddPopup ? renderAddPopup(savedTitleValue, savedTimeValue) : ''}
@@ -2481,6 +2755,7 @@
       ${showDeleteConfirm ? renderDeleteConfirm() : ''}
       ${showTrashDeleteConfirm ? renderTrashDeleteConfirm() : ''}
       ${showDeleteFolderConfirm ? renderDeleteFolderConfirm() : ''}
+      ${pendingDeletePersonId ? renderDeletePersonConfirm() : ''}
       ${showUncheckConfirm ? renderUncheckConfirm() : ''}
       ${pendingPriorityChange ? renderPriorityConfirm() : ''}
       ${pendingBulkPriority !== null ? renderBulkPriorityConfirm() : ''}
@@ -2530,6 +2805,8 @@
     desktopNav = view;
     viewingTrash = (view === 'trash');
     viewingFolders = (view === 'folders');
+    viewingPeople = (view === 'people');
+    if (view === 'people') { showSettings = false; selectMode = false; viewingChangeHistory = false; editingPersonId = null; newPersonError = ''; }
     if (view === 'dashboard') { dateFilterMode = 'all'; priorityFilter = null; searchQuery = ''; showSettings = false; dueStateFilter = null; }
     else if (view === 'today') { dateFilterMode = 'today'; showSettings = false; dueStateFilter = null; }
     else if (view === 'upcoming') { dateFilterMode = 'all'; showSettings = false; dueStateFilter = 'upcoming'; }
@@ -2552,7 +2829,8 @@
       { key: 'checked', label: 'Checked' },
       { key: 'trash', label: `Trash${trashCount ? ` (${trashCount})` : ''}` },
       { key: 'settings', label: 'Settings' },
-      { key: 'folders', label: 'Folders' }
+      { key: 'folders', label: 'Folders' },
+      { key: 'people', label: 'People' }
     ];
     return `
       <div class="sidebar-logo"><img src="${LOGO_URL}" alt="TLS Solutions" /></div>
@@ -2585,7 +2863,7 @@
   }
   function computeSyncFingerprintRaw() {
     const sortedReminders = [...reminders].sort((a, b) => a.id.localeCompare(b.id));
-    const str = JSON.stringify(sortedReminders) + JSON.stringify(folders.slice().sort()) + JSON.stringify(changeHistory);
+    const str = JSON.stringify(sortedReminders) + JSON.stringify(folders.slice().sort()) + JSON.stringify(changeHistory) + JSON.stringify([...people].sort((a, b) => a.id.localeCompare(b.id)));
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
       hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
@@ -2717,6 +2995,8 @@
             <p class="snooze-label" style="margin:10px 0 2px;">Folder</p>
             ${renderFolderPicker('editdraft', r.id, liveEditFolders || r.folders)}
             ${renderFolderShortcuts('editdraft', r.id, liveEditFolders || r.folders, previewPriority === 1)}
+            <p class="snooze-label" style="margin:10px 0 2px;">Send to (WhatsApp)</p>
+            ${renderPeoplePicker('editdraft', r.id)}
             <div class="edit-actions" style="margin-top:10px;">
               <button class="edit-save-btn" data-save-edit="${r.id}">Save</button>
               <button class="edit-cancel-btn" data-cancel-edit="${r.id}">Cancel</button>
@@ -2736,6 +3016,8 @@
         <div class="reminder-body">
           <p class="reminder-title" style="${reminderTitleStyle(r)}">${escapeHtml(r.title)}</p>
           <div class="reminder-time">${fmtTime(r.when)}${(!r.done && r.when && !due) ? ' <span class="not-due-tag">&middot; upcoming</span>' : ''}</div>
+          ${waInfoHtml(r)}
+          ${!selectMode ? waChooserHtml(r) : ''}
           ${selectMode ? `<div class="reminder-folders">&#128193; ${((r.folders && r.folders.length) ? r.folders : ['General']).map(f => escapeHtml(f)).join(', ')}</div>` : `
           <div class="quick-folder-row">
             <span class="priority-label">Folder</span>
@@ -2766,6 +3048,7 @@
         <div style="display:flex; flex-direction:column; gap:6px;">
           <button class="edit-btn" style="background:var(--ember-soft); color:var(--ember);" data-delete-from-card="${r.id}">Delete</button>
           <button class="edit-btn" data-edit-id="${r.id}">Edit</button>
+          ${waButtonHtml(r)}
         </div>` : ''}
       </div>
     `;
@@ -2934,7 +3217,7 @@
     praveenToggleOn = false;
     viewingFolders = false;
     viewingTrash = false;
-    viewingChangeHistory = false;
+    viewingChangeHistory = false; viewingPeople = false;
     desktopNav = 'dashboard';
     folderFilterSelection = ['Priority'];
     priorityFilter = 1;
@@ -2955,7 +3238,7 @@
     topToggleOn = false;
     viewingFolders = false;
     viewingTrash = false;
-    viewingChangeHistory = false;
+    viewingChangeHistory = false; viewingPeople = false;
     desktopNav = 'dashboard';
     folderFilterSelection = ['Praveen'];
     priorityFilter = 1;
@@ -2977,7 +3260,7 @@
     praveenToggleOn = false;
     viewingFolders = false;
     viewingTrash = false;
-    viewingChangeHistory = false;
+    viewingChangeHistory = false; viewingPeople = false;
     desktopNav = 'dashboard';
     folderFilterSelection = [];
     priorityFilter = null; // show every priority
@@ -2999,7 +3282,7 @@
     praveenToggleOn = false;
     viewingFolders = false;
     viewingTrash = false;
-    viewingChangeHistory = false;
+    viewingChangeHistory = false; viewingPeople = false;
     desktopNav = 'dashboard';
     folderFilterSelection = [];
     priorityFilter = null; // show every priority
@@ -3018,7 +3301,7 @@
     pBothToggleOn = false; ppToggleOn = false;
     viewingFolders = false;
     viewingTrash = false;
-    viewingChangeHistory = false;
+    viewingChangeHistory = false; viewingPeople = false;
     desktopNav = 'dashboard';
     folderFilterSelection = [name];
     dueStateFilter = null;
@@ -3157,6 +3440,10 @@
             ${renderFolderPicker('add', null, addFolders)}
             ${renderFolderShortcuts('add', null, addFolders, addPriority === 1)}
           </div>
+          <p class="snooze-label" style="text-align:center; margin-top:2px;">Send to (WhatsApp)</p>
+          <div style="display:flex; flex-direction:column; align-items:center; margin-bottom:10px;">
+            ${renderPeoplePicker('add', null)}
+          </div>
           <input type="datetime-local" class="edit-time-input" id="add-popup-time" value="${timeValue}" />
           <p class="snooze-label" style="margin-top:10px;">Push time forward by</p>
           <div class="snooze-grid">
@@ -3250,6 +3537,10 @@
               ${renderFolderPicker('alarmeditdraft', r.id, alarmEditFolders || r.folders)}
               ${renderFolderShortcuts('alarmeditdraft', r.id, alarmEditFolders || r.folders, alarmEditPriority === 1)}
             </div>
+            <p class="snooze-label" style="text-align:center;">Send to (WhatsApp)</p>
+            <div style="display:flex; flex-direction:column; align-items:center;">
+              ${renderPeoplePicker('alarmeditdraft', r.id)}
+            </div>
             <div class="alarm-actions" style="margin-top:18px;">
               <button class="alarm-done-btn" id="alarm-edit-save" style="background:var(--ember);">Save</button>
               <button class="alarm-dismiss-btn" id="alarm-edit-cancel">Cancel</button>
@@ -3270,6 +3561,12 @@
             <button class="alarm-dismiss-btn" id="alarm-edit" data-alarm-id="${displayId}" style="flex:1;">Edit</button>
             <button class="alarm-dismiss-btn" id="alarm-delete" data-alarm-id="${displayId}" style="flex:1;">Delete</button>
           </div>
+          ${linkedPeople(r.people).length ? `
+          <div style="display:flex; flex-direction:column; align-items:center; margin:-4px 0 14px;">
+            ${waButtonHtml(r)}
+            ${waChooserHtml(r)}
+            <div style="text-align:center;">${waInfoHtml(r)}</div>
+          </div>` : ''}
           <p class="snooze-label">Priority</p>
           <div class="priority-row" style="justify-content:center; margin-top:0 0 16px;">
             ${priorityRowHtml(priorityKey(r.priority, r.folders), () => `data-alarm-priority-id="${r.id}"`)}
@@ -3368,6 +3665,8 @@
     if (cancelDeleteBtn) cancelDeleteBtn.addEventListener('click', cancelDelete);
     const trashToggleBtn = document.getElementById('trash-toggle-btn');
     if (trashToggleBtn) trashToggleBtn.addEventListener('click', toggleViewTrash);
+    const peopleToggleBtn = document.getElementById('people-toggle-btn');
+    if (peopleToggleBtn) peopleToggleBtn.addEventListener('click', toggleViewPeople);
     const foldersToggleBtn = document.getElementById('folders-toggle-btn');
     if (foldersToggleBtn) foldersToggleBtn.addEventListener('click', toggleViewFolders);
     const importExcelBtn = document.getElementById('import-excel-btn');
@@ -3539,6 +3838,29 @@
   delegate('[data-voice-input-target]', el => (() => startVoiceInput(el.dataset.voiceInputTarget))());
   delegate('[data-delete-folder]', el => (() => requestDeleteFolder(el.dataset.deleteFolder))());
   delegate('[data-edit-folder]', el => (() => startEditFolder(el.dataset.editFolder))());
+  delegate('[data-wa-rid]', el => recordWaSent(el.dataset.waRid, el.dataset.waPid));
+  delegate('[data-wa-chooser]', el => toggleWaChooser(el.dataset.waChooser));
+  delegate('[data-person-toggle-context]', el => togglePersonForContext(el.dataset.personToggleContext, el.dataset.personToggleId));
+  delegate('[data-person-add]', () => addPerson());
+  delegate('[data-person-edit]', el => startEditPerson(el.dataset.personEdit));
+  delegate('[data-person-save]', el => savePerson(el.dataset.personSave));
+  delegate('[data-person-cancel]', () => { editingPersonId = null; newPersonError = ''; render(); });
+  delegate('[data-person-delete]', el => { pendingDeletePersonId = el.dataset.personDelete; render(); });
+  delegate('[data-person-delete-confirm]', () => confirmDeletePerson());
+  delegate('[data-person-delete-cancel]', () => { pendingDeletePersonId = null; render(); });
+  // Keep what's typed in the People form across background refreshes.
+  document.addEventListener('input', (e) => {
+    const id = e.target && e.target.id;
+    if (id === 'new-person-name') newPersonName = e.target.value;
+    else if (id === 'new-person-phone') newPersonPhone = e.target.value;
+    else if (id === 'edit-person-name') editPersonName = e.target.value;
+    else if (id === 'edit-person-phone') editPersonPhone = e.target.value;
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || !e.target) return;
+    if (e.target.id === 'new-person-name' || e.target.id === 'new-person-phone') addPerson();
+    else if ((e.target.id === 'edit-person-name' || e.target.id === 'edit-person-phone') && editingPersonId) savePerson(editingPersonId);
+  });
   delegate('[data-view-folder]', el => (() => viewFolderReminders(el.dataset.viewFolder))());
   delegate('[data-trash-pick]', el => (() => toggleTrashPick(el.dataset.trashPick))());
   delegate('[data-trash-restore]', el => (() => restoreFromTrash(el.dataset.trashRestore))());
