@@ -1703,6 +1703,7 @@
     render();
   }
   function toggleFolderForContext(context, id, name) {
+    if (context === 'edit' && isMultiTarget(id)) { requestBulkFolder(id, name, false); return; }
     if (context === 'add') {
       if (tagTurnsOnP1(addFolders, name)) addPriority = 1;
       addFolders = applyTagToggle(addFolders, name, false);
@@ -1733,6 +1734,7 @@
     render();
   }
   function setFolderSelectionForContext(context, id, mode) {
+    if (context === 'edit' && isMultiTarget(id)) { pendingBulkFolder = { ids: [...selectedIds], mode }; render(); return; }
     const value = mode === 'all' ? folders.slice() : [];
     if (context === 'add') {
       addFolders = value;
@@ -1753,7 +1755,73 @@
     }
     render();
   }
+  // True when a tap on this card should change every selected reminder.
+  function isMultiTarget(id) { return !!id && selectedIds.has(id) && selectedIds.size > 1; }
+
+  // ---- Add/remove a tag or folder on all selected reminders ----
+  let pendingBulkFolder = null; // { ids, name, add, fallbackGeneral }
+  function requestBulkFolder(id, name, fallbackGeneral) {
+    const r = reminders.find(r => r.id === id);
+    if (!r) return;
+    const add = !folderListOf(r.folders).includes(name); // decided by the card you tapped
+    pendingBulkFolder = { ids: [...selectedIds], name, add, fallbackGeneral };
+    render();
+  }
+  function bulkFolderSideEffect(name, add) {
+    if (add && name === 'PP') return 'P and Priority will be added too, and priority set to 1.';
+    if (add && name === 'P') return 'Priority will be added too, and priority set to 1.';
+    if (!add && name === 'Priority') return 'P and PP will also come off.';
+    if (!add && name === 'P') return 'PP will also come off.';
+    return '';
+  }
+  function confirmBulkFolder() {
+    if (!pendingBulkFolder) return;
+    const { ids, name, add, fallbackGeneral, mode } = pendingBulkFolder;
+    pendingBulkFolder = null;
+    const set = new Set(ids);
+    if (mode) {
+      reminders.forEach(r => { if (set.has(r.id)) { r.folders = mode === 'all' ? folders.slice() : []; r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title); } });
+      save(); render(); return;
+    }
+    ensureFolderExists(name);
+    reminders.forEach(r => {
+      if (!set.has(r.id)) return;
+      const cur = folderListOf(r.folders);
+      if (cur.includes(name) === add) return; // already in the wanted state
+      if (tagTurnsOnP1(cur, name)) r.priority = 1;
+      r.folders = applyTagToggle(cur, name, fallbackGeneral);
+      r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title);
+    });
+    save();
+    render();
+  }
+  function cancelBulkFolder() { pendingBulkFolder = null; render(); }
+  function renderBulkFolderConfirm() {
+    const { ids, name, add, mode } = pendingBulkFolder;
+    const n = ids.length;
+    const extra = mode ? '' : bulkFolderSideEffect(name, add);
+    const what = mode === 'all' ? `Put <b>${n} reminders</b> in <b>all folders</b>`
+      : mode === 'none' ? `<b>Clear all folders</b> from <b>${n} reminders</b>`
+      : `<b>${add ? 'Add' : 'Remove'}</b> '${escapeHtml(name)}' ${add ? 'to' : 'from'} <b>${n} reminder${n === 1 ? '' : 's'}</b>`;
+    const btn = mode === 'all' ? 'Yes, all folders' : mode === 'none' ? 'Yes, clear' : `Yes, ${add ? 'add' : 'remove'}`;
+    return `
+      <div class="alarm-overlay">
+        <div class="alarm-card">
+          <div class="alarm-glyph">?</div>
+          <p class="alarm-title" style="font-size:24px; font-weight:700; margin:6px 0 4px;">Are you sure?</p>
+          <p class="alarm-time" style="font-size:16px;">${what}</p>
+          ${extra ? `<p class="alarm-time" style="font-size:14px;">${extra}</p>` : ''}
+          <div class="alarm-actions">
+            <button class="alarm-done-btn" id="confirm-bulk-folder-btn" style="background:var(--ember);">${btn} (${n})</button>
+            <button class="alarm-dismiss-btn" id="cancel-bulk-folder-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function toggleQuickFolderShortcut(context, id, name) {
+    if (context === 'edit' && isMultiTarget(id)) { requestBulkFolder(id, name, true); return; }
     ensureFolderExists(name);
     if (context === 'add') {
       if (tagTurnsOnP1(addFolders, name)) addPriority = 1;
@@ -2155,7 +2223,9 @@
     showUncheckConfirm = false;
     render();
   }
+  let pendingDeleteIsBulk = false;
   function deleteBulk() {
+    pendingDeleteIsBulk = true;
     pendingDeleteIds = new Set(selectedIds);
     showDeleteConfirm = true;
     render();
@@ -2176,9 +2246,15 @@
     if (editingId && pendingDeleteIds.has(editingId)) { editingId = null; editAnchorTime = null; liveEditTitle = null; liveEditTime = null; liveEditPriority = null; liveEditFolders = null; }
     save();
     showDeleteConfirm = false;
+    if (pendingDeleteIsBulk) {
+      selectMode = false;
+      selectedIds.clear(); liveBulkTime = null; bulkFolders = []; bulkBarExpanded = false;
+    } else {
+      // Deleting one unselected reminder leaves your other selections alone.
+      pendingDeleteIds.forEach(id => selectedIds.delete(id));
+    }
     pendingDeleteIds = new Set();
-    selectMode = false;
-    selectedIds.clear(); liveBulkTime = null; bulkFolders = []; bulkBarExpanded = false;
+    pendingDeleteIsBulk = false;
     render();
   }
 
@@ -2325,6 +2401,7 @@
     render();
   }
   function deleteFromEdit(id) {
+    pendingDeleteIsBulk = false;
     pendingDeleteIds = new Set([id]);
     showDeleteConfirm = true;
     render();
@@ -2837,6 +2914,7 @@
       ${pendingPriorityChange ? renderPriorityConfirm() : ''}
       ${pendingBulkPriority !== null ? renderBulkPriorityConfirm() : ''}
       ${pendingBulkSnooze ? renderBulkSnoozeConfirm() : ''}
+      ${pendingBulkFolder ? renderBulkFolderConfirm() : ''}
     `;
 
     const sidebarEl = document.getElementById('app-sidebar');
@@ -3200,7 +3278,7 @@
       const r = reminders.find(r => r.id === onlyId);
       titleText = r ? `Move "${escapeHtml(r.title)}" to Trash?` : 'Move this reminder to Trash?';
     } else {
-      titleText = `Move ${pendingDeleteIds.size} reminders to Trash?`;
+      titleText = `Are you sure? Move ${pendingDeleteIds.size} reminders to Trash?`;
     }
     return `
       <div class="alarm-overlay">
@@ -3804,6 +3882,10 @@
     if (confirmBulkPriorityBtn) confirmBulkPriorityBtn.addEventListener('click', confirmBulkPriority);
     const cancelBulkPriorityBtn = document.getElementById('cancel-bulk-priority-btn');
     if (cancelBulkPriorityBtn) cancelBulkPriorityBtn.addEventListener('click', cancelBulkPriority);
+    const confirmBulkFolderBtn = document.getElementById('confirm-bulk-folder-btn');
+    if (confirmBulkFolderBtn) confirmBulkFolderBtn.addEventListener('click', confirmBulkFolder);
+    const cancelBulkFolderBtn = document.getElementById('cancel-bulk-folder-btn');
+    if (cancelBulkFolderBtn) cancelBulkFolderBtn.addEventListener('click', cancelBulkFolder);
     const confirmBulkSnoozeBtn = document.getElementById('confirm-bulk-snooze-btn');
     if (confirmBulkSnoozeBtn) confirmBulkSnoozeBtn.addEventListener('click', confirmBulkSnooze);
     const cancelBulkSnoozeBtn = document.getElementById('cancel-bulk-snooze-btn');
@@ -3913,7 +3995,7 @@
   delegate('[data-edit-bump-abs]', el => (() => { bumpEditTimeAbsolute(el.dataset.editBumpAbs, parseInt(el.dataset.hour, 10)); markSnoozeSelected(el); })());
   delegate('[data-cancel-edit]', el => (cancelEdit)());
   delegate('[data-delete-from-edit]', el => (() => deleteFromEdit(el.dataset.deleteFromEdit))());
-  delegate('[data-delete-from-card]', el => (() => deleteFromEdit(el.dataset.deleteFromCard))());
+  delegate('[data-delete-from-card]', el => (() => isMultiTarget(el.dataset.deleteFromCard) ? deleteBulk() : deleteFromEdit(el.dataset.deleteFromCard))());
   delegate('[data-voice-input-target]', el => (() => startVoiceInput(el.dataset.voiceInputTarget))());
   delegate('[data-delete-folder]', el => (() => requestDeleteFolder(el.dataset.deleteFolder))());
   delegate('[data-edit-folder]', el => (() => startEditFolder(el.dataset.editFolder))());
