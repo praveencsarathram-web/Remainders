@@ -225,6 +225,14 @@
     display: flex; align-items: center; justify-content: center; cursor: pointer; color: transparent; transition: all 0.15s ease;
   }
   .pick-box { border-radius: 6px; }
+  .select-circle {
+    flex-shrink: 0; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--muted);
+    display: flex; align-items: center; justify-content: center; cursor: pointer; color: transparent; transition: all 0.15s ease;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .select-circle.checked { background: var(--select); border-color: var(--select); color: white; }
+  .select-circle svg { width: 13px; height: 13px; }
+  .select-circle:active { transform: scale(0.96); }
   .check.checked { background: var(--ember); border-color: var(--ember); color: white; }
   .pick-box.checked { background: var(--select); border-color: var(--select); color: white; }
   .check svg, .pick-box svg { width: 13px; height: 13px; }
@@ -1448,6 +1456,64 @@
     save();
     render();
   }
+  // ---- Snooze that can apply to many selected reminders ----
+  let pendingBulkSnooze = null; // { ids, target, label }
+  function snoozeTargetISO(kind, arg) {
+    if (kind === 'min') return new Date(Date.now() + arg * 60000).toISOString();
+    if (kind === 'abs') return nextOccurrenceISO(arg);
+    if (kind === 'nxw') {
+      const now = new Date();
+      const c = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 4, 0, 0, 0);
+      let d = (7 - c.getDay()) % 7; if (d === 0) d = 7;
+      c.setDate(c.getDate() + d);
+      return c.toISOString();
+    }
+    return null;
+  }
+  // Snooze button on a card. If that card is selected along with others,
+  // every selected reminder moves — after the "Are you sure" step.
+  function cardSnooze(id, kind, arg, label) {
+    if (selectedIds.has(id) && selectedIds.size > 1) {
+      requestBulkSnooze([...selectedIds], snoozeTargetISO(kind, arg), label);
+      return;
+    }
+    if (kind === 'min') quickSnooze(id, arg);
+    else if (kind === 'abs') quickSnoozeAbsolute(id, arg);
+    else if (kind === 'nxw') quickSnoozeNextSunday(id);
+  }
+  function requestBulkSnooze(ids, target, label) {
+    ids = ids.filter(id => reminders.some(r => r.id === id));
+    if (!ids.length || !target || isNaN(new Date(target).getTime())) return;
+    pendingBulkSnooze = { ids, target, label };
+    render();
+  }
+  function confirmBulkSnooze() {
+    if (!pendingBulkSnooze) return;
+    const { ids, target } = pendingBulkSnooze;
+    pendingBulkSnooze = null;
+    const set = new Set(ids);
+    reminders.forEach(r => { if (set.has(r.id)) { r.when = target; r.suppressedUntil = null; r.done = false; r.completedAt = null; r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title); } });
+    save(); selectMode = false; selectedIds.clear(); liveBulkTime = null; bulkFolders = []; bulkBarExpanded = false; render();
+  }
+  function cancelBulkSnooze() { pendingBulkSnooze = null; render(); }
+  function renderBulkSnoozeConfirm() {
+    const n = pendingBulkSnooze.ids.length;
+    return `
+      <div class="alarm-overlay">
+        <div class="alarm-card">
+          <div class="alarm-glyph">?</div>
+          <p class="alarm-title" style="font-size:24px; font-weight:700; margin:6px 0 4px;">Are you sure?</p>
+          <p class="alarm-time" style="font-size:16px;">Snooze <b>${n} reminder${n === 1 ? '' : 's'}</b> (${escapeHtml(pendingBulkSnooze.label)})</p>
+          <p class="alarm-time" style="font-size:16px;">Next time: <b>${fmtTime(pendingBulkSnooze.target)}</b></p>
+          <div class="alarm-actions">
+            <button class="alarm-done-btn" id="confirm-bulk-snooze-btn" style="background:var(--ember);">Yes, snooze ${n}</button>
+            <button class="alarm-dismiss-btn" id="cancel-bulk-snooze-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function setPriority(id, priority) {
     const r = reminders.find(r => r.id === id);
     if (r) { r.priority = priority; r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title); }
@@ -1455,6 +1521,9 @@
     render();
   }
   function requestPriorityChange(id, priority) {
+    // Tapping a priority on a card that's part of a multi-selection changes
+    // every selected reminder (after the "Are you sure" step).
+    if (selectedIds.has(id) && selectedIds.size > 1) { requestBulkPriority(priority); return; }
     const r = reminders.find(r => r.id === id);
     if (!r || priorityKey(r.priority, r.folders) === priority) return;
     pendingPriorityChange = { id, priority };
@@ -2757,7 +2826,7 @@
 
       ${(viewingTrash || viewingFolders || viewingChangeHistory || viewingPeople) ? '' : (!loaded ? '<div class="empty-state">Loading...</div>' : renderLists(active, done))}
 
-      ${selectMode && selectedIds.size > 0 ? renderBulkBar() : ''}
+      ${selectedIds.size > 0 ? renderBulkBar() : ''}
       ${showAddPopup ? renderAddPopup(savedTitleValue, savedTimeValue) : ''}
       ${alarmQueue.length && !alertsPaused && !editingId ? renderAlarm() : ''}
       ${showDeleteConfirm ? renderDeleteConfirm() : ''}
@@ -2767,6 +2836,7 @@
       ${showUncheckConfirm ? renderUncheckConfirm() : ''}
       ${pendingPriorityChange ? renderPriorityConfirm() : ''}
       ${pendingBulkPriority !== null ? renderBulkPriorityConfirm() : ''}
+      ${pendingBulkSnooze ? renderBulkSnoozeConfirm() : ''}
     `;
 
     const sidebarEl = document.getElementById('app-sidebar');
@@ -2834,7 +2904,6 @@
       { key: 'dashboard', label: 'Dashboard' },
       { key: 'today', label: 'Today' },
       { key: 'upcoming', label: 'Upcoming' },
-      { key: 'checked', label: 'Checked' },
       { key: 'trash', label: `Trash${trashCount ? ` (${trashCount})` : ''}` },
       { key: 'settings', label: 'Settings' },
       { key: 'folders', label: 'Folders' },
@@ -2845,20 +2914,18 @@
       ${navItems.map(item => `<button class="sidebar-nav-btn ${desktopNav === item.key ? 'active' : ''}" data-desktop-nav="${item.key}">${item.label}</button>`).join('')}
       <button class="sidebar-nav-btn ${praveenToggleOn ? 'active' : ''}" id="sidebar-praveen-toggle"${praveenToggleOn ? ' style="background:#FFE600; color:#000000;"' : ''}>Praveen</button>
       <div style="margin-top:auto; padding:14px 6px 0; font-family:'IBM Plex Sans',sans-serif; font-size:11px; color:var(--muted);">
-        Due today: ${dueTodayCount} · Upcoming: ${upcomingCount} · Checked: ${checkedCount}
+        Due: ${dueTodayCount} · Not due: ${upcomingCount}
       </div>
     `;
   }
 
   function renderDashboardStats() {
     const dueTodayCount = reminders.filter(r => !r.done && matchesFilters(r) && isDue(r)).length;
-    const uncheckedCount = reminders.filter(r => !r.done && matchesFilters(r)).length;
-    const checkedCount = reminders.filter(r => r.done && matchesFilters(r)).length;
+    const notDueCount = reminders.filter(r => !r.done && matchesFilters(r) && !isDue(r)).length;
     return `
       <div class="dashboard-stats">
-        <button class="stat-card stat-due ${dueStateFilter === 'due' ? 'stat-active' : ''}" data-stat-filter="due"><span class="stat-label">DUE NOW</span><span class="stat-value">${dueTodayCount}</span></button>
-        <button class="stat-card stat-upcoming ${dueStateFilter === 'unchecked' ? 'stat-active' : ''}" data-stat-filter="unchecked"><span class="stat-label">UNCHECKED</span><span class="stat-value">${uncheckedCount}</span></button>
-        <button class="stat-card stat-checked ${dueStateFilter === 'checked' ? 'stat-active' : ''}" data-stat-filter="checked"><span class="stat-label">CHECKED</span><span class="stat-value">${checkedCount}</span></button>
+        <button class="stat-card stat-due ${dueStateFilter === 'due' ? 'stat-active' : ''}" data-stat-filter="due"><span class="stat-label">DUE</span><span class="stat-value">${dueTodayCount}</span></button>
+        <button class="stat-card stat-upcoming ${dueStateFilter === 'upcoming' ? 'stat-active' : ''}" data-stat-filter="upcoming"><span class="stat-label">NOT DUE</span><span class="stat-value">${notDueCount}</span></button>
       </div>
     `;
   }
@@ -3017,10 +3084,7 @@
 
     return `
       <div class="reminder p${priority} ${r.done ? 'done' : ''} ${picked ? 'picked' : ''}">
-        ${selectMode
-          ? `<div class="pick-box ${picked ? 'checked' : ''}" data-pick="${r.id}">${picked ? checkIcon() : ''}</div>`
-          : `<div class="check ${r.done ? 'checked' : ''}" data-id="${r.id}">${checkIcon()}</div>`
-        }
+        <div class="select-circle ${picked ? 'checked' : ''}" data-pick="${r.id}" title="${picked ? 'Unselect' : 'Select'}">${checkIcon()}</div>
         <div class="reminder-body">
           <p class="reminder-title" style="${reminderTitleStyle(r)}">${escapeHtml(r.title)}</p>
           <div class="reminder-time">${fmtTime(r.when)}${(!r.done && r.when && !due) ? ' <span class="not-due-tag">&middot; upcoming</span>' : ''}</div>
@@ -3037,6 +3101,7 @@
             <span class="priority-label">Snooze</span>
             <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="5">5m</button>
             <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="15">15m</button>
+            <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="30">30m</button>
             <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="60">1h</button>
             <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="120">2h</button>
           </div>
@@ -3046,6 +3111,7 @@
           </div>
           <div class="quick-snooze-row">
             <span class="priority-label">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
+            <button class="quick-snooze-btn" data-quick-snooze="${r.id}" data-minutes="300">5h</button>
             <button class="quick-snooze-btn" data-quick-snooze-abs="${r.id}" data-hour="4">4 AM</button>
             <button class="quick-snooze-btn" data-quick-snooze-tom="${r.id}">TOM</button>
             <button class="quick-snooze-btn" data-quick-snooze-daf="${r.id}">DAF</button>
@@ -3422,10 +3488,11 @@
     return `
       <div class="alarm-overlay">
         <div class="alarm-card">
-          <p class="alarm-title" style="font-size:32px; font-weight:700; margin:10px 0 4px;">Move to ${pendingBulkPriority}</p>
-          <p class="alarm-time">${selectedIds.size} reminder${selectedIds.size === 1 ? '' : 's'}</p>
+          <div class="alarm-glyph">?</div>
+          <p class="alarm-title" style="font-size:24px; font-weight:700; margin:6px 0 4px;">Are you sure?</p>
+          <p class="alarm-time" style="font-size:16px;">Move <b>${selectedIds.size} reminder${selectedIds.size === 1 ? '' : 's'}</b> to priority <b>${pendingBulkPriority}</b></p>
           <div class="alarm-actions">
-            <button class="alarm-done-btn" id="confirm-bulk-priority-btn" style="background:var(--ember);">Confirm</button>
+            <button class="alarm-done-btn" id="confirm-bulk-priority-btn" style="background:var(--ember);">Yes, change ${selectedIds.size}</button>
             <button class="alarm-dismiss-btn" id="cancel-bulk-priority-btn">Cancel</button>
           </div>
         </div>
@@ -3737,6 +3804,10 @@
     if (confirmBulkPriorityBtn) confirmBulkPriorityBtn.addEventListener('click', confirmBulkPriority);
     const cancelBulkPriorityBtn = document.getElementById('cancel-bulk-priority-btn');
     if (cancelBulkPriorityBtn) cancelBulkPriorityBtn.addEventListener('click', cancelBulkPriority);
+    const confirmBulkSnoozeBtn = document.getElementById('confirm-bulk-snooze-btn');
+    if (confirmBulkSnoozeBtn) confirmBulkSnoozeBtn.addEventListener('click', confirmBulkSnooze);
+    const cancelBulkSnoozeBtn = document.getElementById('cancel-bulk-snooze-btn');
+    if (cancelBulkSnoozeBtn) cancelBulkSnoozeBtn.addEventListener('click', cancelBulkSnooze);
     const bulkReopen = document.getElementById('bulk-reopen');
     if (bulkReopen) bulkReopen.addEventListener('click', requestBulkMarkIncomplete);
     const confirmUncheckBtn = document.getElementById('confirm-uncheck-btn');
@@ -3747,7 +3818,7 @@
     if (bulkExport) bulkExport.addEventListener('click', exportSelectedToExcel);
     const bulkApply = document.getElementById('bulk-apply');
     const bulkTime = document.getElementById('bulk-time');
-    if (bulkApply) bulkApply.addEventListener('click', () => applyBulkTime(bulkTime.value));
+    if (bulkApply) bulkApply.addEventListener('click', () => { if (bulkTime.value) requestBulkSnooze([...selectedIds], new Date(bulkTime.value).toISOString(), 'Custom time'); });
 
     const alarmDelete = document.getElementById('alarm-delete');
     if (alarmDelete) alarmDelete.addEventListener('click', () => deleteFromAlarm(alarmDelete.dataset.alarmId));
@@ -3830,11 +3901,11 @@
   delegate('[data-folder-select-all-context]', el => (() => setFolderSelectionForContext(el.dataset.folderSelectAllContext, el.dataset.folderSelectAllId || null, 'all'))());
   delegate('[data-folder-deselect-all-context]', el => (() => setFolderSelectionForContext(el.dataset.folderDeselectAllContext, el.dataset.folderDeselectAllId || null, 'none'))());
   delegate('[data-folder-shortcut-toggle-context]', el => (() => toggleQuickFolderShortcut(el.dataset.folderShortcutToggleContext, el.dataset.folderShortcutToggleId || null, el.dataset.folderShortcutToggleName))());
-  delegate('[data-quick-snooze]', el => (() => quickSnooze(el.dataset.quickSnooze, parseInt(el.dataset.minutes, 10)))());
-  delegate('[data-quick-snooze-abs]', el => (() => quickSnoozeAbsolute(el.dataset.quickSnoozeAbs, parseInt(el.dataset.hour, 10)))());
-  delegate('[data-quick-snooze-tom]', el => (() => quickSnoozeTomorrow(el.dataset.quickSnoozeTom))());
-  delegate('[data-quick-snooze-daf]', el => (() => quickSnoozeDayAfterTomorrow(el.dataset.quickSnoozeDaf))());
-  delegate('[data-quick-snooze-nxw]', el => (() => quickSnoozeNextSunday(el.dataset.quickSnoozeNxw))());
+  delegate('[data-quick-snooze]', el => (() => cardSnooze(el.dataset.quickSnooze, 'min', parseInt(el.dataset.minutes, 10), el.textContent.trim()))());
+  delegate('[data-quick-snooze-abs]', el => (() => cardSnooze(el.dataset.quickSnoozeAbs, 'abs', parseInt(el.dataset.hour, 10), el.textContent.trim()))());
+  delegate('[data-quick-snooze-tom]', el => (() => cardSnooze(el.dataset.quickSnoozeTom, 'min', 24 * 60, 'TOM'))());
+  delegate('[data-quick-snooze-daf]', el => (() => cardSnooze(el.dataset.quickSnoozeDaf, 'min', 48 * 60, 'DAF'))());
+  delegate('[data-quick-snooze-nxw]', el => (() => cardSnooze(el.dataset.quickSnoozeNxw, 'nxw', 0, 'NXW'))());
   delegate('[data-edit-priority]', el => (() => setEditPriority(parsePriorityChoice(el.dataset.p)))());
   delegate('[data-alarm-priority-id]', el => (() => setAlarmPriority(el.dataset.alarmPriorityId, parsePriorityChoice(el.dataset.p)))());
   delegate('[data-edit-id]', el => (() => startEdit(el.dataset.editId))());
@@ -3873,9 +3944,9 @@
   delegate('[data-trash-pick]', el => (() => toggleTrashPick(el.dataset.trashPick))());
   delegate('[data-trash-restore]', el => (() => restoreFromTrash(el.dataset.trashRestore))());
   delegate('[data-trash-delete-forever]', el => (() => requestDeleteForever(el.dataset.trashDeleteForever))());
-  delegate('.bulk-chip', el => (() => applyBulkTime(el.dataset.preset))());
-  delegate('[data-bulk-snooze]', el => (() => applyBulkSnooze(parseInt(el.dataset.bulkSnooze, 10)))());
-  delegate('[data-bulk-snooze-abs]', el => (() => applyBulkSnoozeAbsolute(parseInt(el.dataset.bulkSnoozeAbs, 10)))());
+  delegate('.bulk-chip[data-preset]', el => (() => requestBulkSnooze([...selectedIds], el.dataset.preset ? new Date(el.dataset.preset).toISOString() : null, el.textContent.trim()))());
+  delegate('[data-bulk-snooze]', el => (() => requestBulkSnooze([...selectedIds], snoozeTargetISO('min', parseInt(el.dataset.bulkSnooze, 10)), el.textContent.trim()))());
+  delegate('[data-bulk-snooze-abs]', el => (() => requestBulkSnooze([...selectedIds], snoozeTargetISO('abs', parseInt(el.dataset.bulkSnoozeAbs, 10)), el.textContent.trim()))());
   delegate('[data-bulk-priority]', el => (() => requestBulkPriority(parsePriorityChoice(el.dataset.p)))());
   delegate('[data-snooze]', el => (() => snoozeCurrent(el.dataset.alarmId, parseInt(el.dataset.snooze, 10)))());
   delegate('[data-snooze-abs]', el => (() => snoozeCurrentAbsolute(el.dataset.alarmId, parseInt(el.dataset.snoozeAbs, 10)))());
