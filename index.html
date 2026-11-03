@@ -2762,6 +2762,8 @@
      RENDER
      ========================================================= */
   let renderScheduled = false;
+  let frozenOrder = null;   // Map id -> position, used while something is selected
+  let lastShownOrder = [];  // card order from the last unfrozen render
   let searchDebounce = null;
   let lastRenderAt = 0;
   function render() {
@@ -2831,6 +2833,26 @@
     } else {
       active = sortList(reminders.filter(r => !r.done && matchesFilters(r)));
       done = sortList(reminders.filter(r => r.done && matchesFilters(r)));
+    }
+    // While any reminder is selected, keep cards where they are on screen —
+    // a change (tag, priority, snooze) would otherwise re-sort the list and
+    // make cards jump under your finger. The normal sort returns once the
+    // selection is cleared.
+    if (selectedIds.size > 0) {
+      if (!frozenOrder) frozenOrder = new Map(lastShownOrder.map((id, i) => [id, i]));
+      const keep = list => {
+        const pos = new Map(list.map((r, i) => [r.id, i]));
+        return list.slice().sort((a, b) => {
+          const fa = frozenOrder.has(a.id), fb = frozenOrder.has(b.id);
+          if (fa && fb) return frozenOrder.get(a.id) - frozenOrder.get(b.id);
+          if (fa !== fb) return fa ? -1 : 1; // anything new goes after the frozen cards
+          return pos.get(a.id) - pos.get(b.id);
+        });
+      };
+      active = keep(active); done = keep(done);
+    } else {
+      frozenOrder = null;
+      lastShownOrder = active.concat(done).map(r => r.id);
     }
     const totalActiveCount = reminders.filter(r => !r.done && !r.trashed).length;
     const visibleCount = reminders.filter(r => !r.trashed).length;
