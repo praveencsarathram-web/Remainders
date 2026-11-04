@@ -309,7 +309,7 @@
     .priority-dot { width: 30px; height: 30px; }
     .priority-dot::before { font-size: 13px; }
     .priority-dot.priority-dot-2p::before { font-size: 11px; }
-    /* Reminder cards: six circles (1, 2P, 2-5) on one line at phone width */
+    /* Reminder cards: seven circles (1, 1P, 2P, 2-5) on one line at phone width */
     .card-priority-row { gap: 3px; flex-wrap: nowrap; }
     .card-priority-row .priority-dot { width: 28px; height: 28px; flex: 0 0 28px; }
     .card-priority-row .priority-dot.priority-dot-2p::before { font-size: 10px; }
@@ -754,12 +754,16 @@
   // "2P" = Priority 2 + Priority folder. It sits between 1 and 2 in every
   // priority row. A reminder counts as 2P when it is priority 2 AND in the
   // Priority folder; plain 2 then shows empty.
-  const PRIORITY_CHOICES = [1, '2P', 2, 3, 4, 5];
-  function parsePriorityChoice(v) { return v === '2P' ? '2P' : parseInt(v, 10); }
+  // "1P" = Priority 1 + Priority folder, same idea as 2P.
+  const PRIORITY_CHOICES = [1, '1P', '2P', 2, 3, 4, 5];
+  const P_CHOICES = { '1P': 1, '2P': 2 }; // the "+ Priority folder" circles
+  function isPChoice(v) { return v === '1P' || v === '2P'; }
+  function parsePriorityChoice(v) { return isPChoice(v) ? v : parseInt(v, 10); }
   function folderListOf(list) { return (list && list.length) ? list : ['General']; }
   function priorityKey(priority, folderList) {
     const pr = priority || 3;
-    return (pr === 2 && folderListOf(folderList).includes('Priority')) ? '2P' : pr;
+    if ((pr === 1 || pr === 2) && folderListOf(folderList).includes('Priority')) return pr + 'P';
+    return pr;
   }
   function ensurePriorityFolderExists() {
     if (!folders.some(f => f.toLowerCase() === 'priority')) folders.push('Priority');
@@ -795,6 +799,13 @@
   function enforceTagRules(rems, folds) {
     let changed = false;
     rems.forEach(r => {
+      // "Checked" no longer exists. Anything still checked (from before the
+      // update, or synced in from a device on the old file) is unchecked.
+      if (r.done) {
+        r.done = false; r.completedAt = null;
+        r.updated = Date.now(); r.version = (r.version || 1) + 1;
+        changed = true;
+      }
       const fl = folderListOf(r.folders);
       const hasP = fl.includes('P') || fl.includes('PP');
       if (!hasP) return;
@@ -820,11 +831,13 @@
   function resolvePriorityChoice(choice, curPriority, curFolders, removeOnPlain2) {
     let fl = folderListOf(curFolders).slice();
     let pr = choice;
-    if (choice === '2P') {
+    if (isPChoice(choice)) {
       ensurePriorityFolderExists();
       if (!fl.includes('Priority')) fl.push('Priority');
-      pr = 2;
-    } else if (choice === 2 && removeOnPlain2 && priorityKey(curPriority, fl) === '2P') {
+      pr = P_CHOICES[choice];
+    } else if ((choice === 1 || choice === 2) && removeOnPlain2 && priorityKey(curPriority, fl) === choice + 'P') {
+      // Tapping plain 1 on a 1P (or plain 2 on a 2P) takes it out of the
+      // Priority folder — and, by the tag rules, P and PP come off with it.
       fl = fl.filter(f => !TAG_REMOVES.Priority.includes(f));
     }
     if (pr !== 1) fl = fl.filter(f => f !== 'P' && f !== 'PP');
@@ -832,23 +845,25 @@
     return { priority: pr, folders: fl };
   }
   function priorityDotHtml(p, checked, extraAttrs) {
-    const is2P = p === '2P';
-    const isRedOne = p === 1 && checked;
-    const color = isRedOne ? '#FF0000' : PRIORITY_META[is2P ? 2 : p];
+    const is2P = isPChoice(p);
+    const base = is2P ? P_CHOICES[p] : p;
+    const isRedOne = base === 1 && checked;
+    const color = isRedOne ? '#FF0000' : PRIORITY_META[base];
     const bg = checked ? color : 'transparent';
     const textColor = checked ? '#ffffff' : color;
-    return `<button class="priority-dot ${is2P ? 'priority-dot-2p' : ''} ${checked ? 'checked' : ''}" style="border-color:${color};${is2P ? ' border-width:3.5px;' : ''} background:${bg}; color:${textColor};" data-p="${p}" ${extraAttrs} title="${is2P ? 'Priority 2 + Priority folder' : 'Priority ' + p}"></button>`;
+    return `<button class="priority-dot ${is2P ? 'priority-dot-2p' : ''} ${checked ? 'checked' : ''}" style="border-color:${color};${is2P ? ' border-width:3.5px;' : ''} background:${bg}; color:${textColor};" data-p="${p}" ${extraAttrs} title="${is2P ? 'Priority ' + base + ' + Priority folder' : 'Priority ' + p}"></button>`;
   }
   function priorityRowHtml(selectedKey, attrsFor) {
     return PRIORITY_CHOICES.map(p => priorityDotHtml(p, selectedKey === p, attrsFor(p))).join('');
   }
   function priorityFilterChipHtml(p, active) {
-    const is2P = p === '2P';
-    const isRedOne = p === 1 && active;
-    const color = isRedOne ? '#FF0000' : PRIORITY_META[is2P ? 2 : p];
+    const is2P = isPChoice(p);
+    const base = is2P ? P_CHOICES[p] : p;
+    const isRedOne = base === 1 && active;
+    const color = isRedOne ? '#FF0000' : PRIORITY_META[base];
     const bg = active ? color : 'transparent';
     const textColor = active ? '#ffffff' : color;
-    return `<button class="priority-filter-chip ${is2P ? 'priority-filter-chip-2p' : ''} ${active ? 'active' : ''}" style="border-color:${color}; background:${bg}; color:${textColor};" data-p="${p}" data-filter-priority="${p}" title="${is2P ? 'Filter to Priority 2 in the Priority folder' : 'Filter to priority ' + p}"></button>`;
+    return `<button class="priority-filter-chip ${is2P ? 'priority-filter-chip-2p' : ''} ${active ? 'active' : ''}" style="border-color:${color}; background:${bg}; color:${textColor};" data-p="${p}" data-filter-priority="${p}" title="${is2P ? 'Filter to Priority ' + base + ' in the Priority folder' : 'Filter to priority ' + p}"></button>`;
   }
   function isDue(r) {
     if (!r.when) return false;
@@ -1404,7 +1419,7 @@
     const r = reminders.find(r => r.id === id);
     if (!r) return;
     r.when = new Date(Date.now() + minutes * 60000).toISOString();
-    r.suppressedUntil = null;
+    r.suppressedUntil = null; r.done = false; r.completedAt = null;
     r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title);
    
     save();
@@ -1415,7 +1430,7 @@
     if (!r) return;
     // Counts from the current time, not the old due time.
     r.when = new Date(Date.now() + 24 * 60 * 60000).toISOString();
-    r.suppressedUntil = null;
+    r.suppressedUntil = null; r.done = false; r.completedAt = null;
     r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title);
     save();
     render();
@@ -1425,7 +1440,7 @@
     if (!r) return;
     // Counts from the current time, not the old due time.
     r.when = new Date(Date.now() + 48 * 60 * 60000).toISOString();
-    r.suppressedUntil = null;
+    r.suppressedUntil = null; r.done = false; r.completedAt = null;
     r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title);
     save();
     render();
@@ -1441,7 +1456,7 @@
     if (daysUntilSunday === 0) daysUntilSunday = 7;
     candidate.setDate(candidate.getDate() + daysUntilSunday);
     r.when = candidate.toISOString();
-    r.suppressedUntil = null;
+    r.suppressedUntil = null; r.done = false; r.completedAt = null;
     r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title);
     save();
     render();
@@ -1450,7 +1465,7 @@
     const r = reminders.find(r => r.id === id);
     if (!r) return;
     r.when = nextOccurrenceISO(hour);
-    r.suppressedUntil = null;
+    r.suppressedUntil = null; r.done = false; r.completedAt = null;
     r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title);
    
     save();
@@ -2414,7 +2429,7 @@
   function matchesFilters(r) {
     if (r.trashed) return false;
     if (!matchesSearch(r)) return false;
-    if (priorityFilter === '2P') { if (priorityKey(r.priority, r.folders) !== '2P') return false; }
+    if (isPChoice(priorityFilter)) { if (priorityKey(r.priority, r.folders) !== priorityFilter) return false; }
     else if (priorityFilter !== null && r.priority !== priorityFilter) return false;
     if (dateFilterMode === 'today' && r.when) {
       const d = new Date(r.when);
@@ -3121,7 +3136,6 @@
     let html = '';
     if (shownActive.length) html += `<div class="reminder-list">${shownActive.map(renderItem).join('')}</div>`;
     if (shownDone.length) {
-      html += `<div class="section-label">Checked</div>`;
       html += `<div class="reminder-list">${shownDone.map(renderItem).join('')}</div>`;
     }
     const hidden = total - shownActive.length - shownDone.length;
