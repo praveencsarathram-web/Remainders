@@ -309,7 +309,7 @@
     .priority-dot { width: 30px; height: 30px; }
     .priority-dot::before { font-size: 13px; }
     .priority-dot.priority-dot-2p::before { font-size: 11px; }
-    /* Reminder cards: seven circles (1, 1P, 2P, 2-5) on one line at phone width */
+    /* Reminder cards: seven circles (1P, 1, 2P, 2-5) on one line at phone width */
     .card-priority-row { gap: 3px; flex-wrap: nowrap; }
     .card-priority-row .priority-dot { width: 28px; height: 28px; flex: 0 0 28px; }
     .card-priority-row .priority-dot.priority-dot-2p::before { font-size: 10px; }
@@ -428,7 +428,6 @@
     border: 1.5px solid currentColor;
     cursor: pointer; position: relative; padding: 0;
   }
-  .priority-filter-chip.priority-filter-chip-2p { border-width: 3px; }
   .priority-filter-chip::before {
     content: attr(data-p); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     font-size: 13px; font-weight: 700; color: currentColor;
@@ -755,7 +754,7 @@
   // priority row. A reminder counts as 2P when it is priority 2 AND in the
   // Priority folder; plain 2 then shows empty.
   // "1P" = Priority 1 + Priority folder, same idea as 2P.
-  const PRIORITY_CHOICES = [1, '1P', '2P', 2, 3, 4, 5];
+  const PRIORITY_CHOICES = ['1P', 1, '2P', 2, 3, 4, 5];
   const P_CHOICES = { '1P': 1, '2P': 2 }; // the "+ Priority folder" circles
   function isPChoice(v) { return v === '1P' || v === '2P'; }
   function parsePriorityChoice(v) { return isPChoice(v) ? v : parseInt(v, 10); }
@@ -851,7 +850,7 @@
     const color = isRedOne ? '#FF0000' : PRIORITY_META[base];
     const bg = checked ? color : 'transparent';
     const textColor = checked ? '#ffffff' : color;
-    return `<button class="priority-dot ${is2P ? 'priority-dot-2p' : ''} ${checked ? 'checked' : ''}" style="border-color:${color};${is2P ? ' border-width:3.5px;' : ''} background:${bg}; color:${textColor};" data-p="${p}" ${extraAttrs} title="${is2P ? 'Priority ' + base + ' + Priority folder' : 'Priority ' + p}"></button>`;
+    return `<button class="priority-dot ${is2P ? 'priority-dot-2p' : ''} ${checked ? 'checked' : ''}" style="border-color:${color};background:${bg}; color:${textColor};" data-p="${p}" ${extraAttrs} title="${is2P ? 'Priority ' + base + ' + Priority folder' : 'Priority ' + p}"></button>`;
   }
   function priorityRowHtml(selectedKey, attrsFor) {
     return PRIORITY_CHOICES.map(p => priorityDotHtml(p, selectedKey === p, attrsFor(p))).join('');
@@ -2429,8 +2428,12 @@
   function matchesFilters(r) {
     if (r.trashed) return false;
     if (!matchesSearch(r)) return false;
-    if (isPChoice(priorityFilter)) { if (priorityKey(r.priority, r.folders) !== priorityFilter) return false; }
-    else if (priorityFilter !== null && r.priority !== priorityFilter) return false;
+    // Each priority button shows only its own group: 1 never includes 1P,
+    // 2 never includes 2P. (The Praveen shortcut still shows all priority 1.)
+    if (priorityFilter !== null) {
+      if (praveenToggleOn && priorityFilter === 1) { if (r.priority !== 1) return false; }
+      else if (priorityKey(r.priority, r.folders) !== priorityFilter) return false;
+    }
     if (dateFilterMode === 'today' && r.when) {
       const d = new Date(r.when);
       const now = new Date();
@@ -2893,7 +2896,6 @@
             <button class="pill-btn trash-toggle ${viewingFolders ? 'active' : ''}" id="folders-toggle-btn" title="Folders">&#128193; Folders</button>
             <button class="pill-btn trash-toggle ${viewingPeople ? 'active' : ''}" id="people-toggle-btn" title="People for WhatsApp reminders">&#128100; People</button>
             <button class="pill-btn trash-toggle" id="import-excel-btn" title="Import reminders from Excel">&#128229; Import</button>
-            <button class="pill-btn trash-toggle priority-header-btn ${topToggleOn ? 'active' : ''}" id="top-priority-btn" title="Priority folder, Priority 1">Priority</button>
             <button class="pill-btn trash-toggle ${praveenToggleOn ? 'active' : ''}" id="praveen-folder-toggle-btn" title="Praveen folder"${praveenToggleOn ? ' style="background:#FFE600; color:#000000;"' : ''}>Praveen</button>
             <button class="search-toggle-btn ${pBothToggleOn ? 'active' : ''}" id="p-both-toggle-btn" title="Show reminders marked P" style="font-weight:700; font-family:'IBM Plex Sans',sans-serif;">P</button>
             <button class="search-toggle-btn ${ppToggleOn ? 'active' : ''}" id="pp-toggle-btn" title="Show reminders marked PP" style="font-weight:700; font-size:12px; font-family:'IBM Plex Sans',sans-serif;">PP</button>
