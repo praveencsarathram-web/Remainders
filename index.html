@@ -834,7 +834,10 @@
       ensurePriorityFolderExists();
       if (!fl.includes('Priority')) fl.push('Priority');
       pr = P_CHOICES[choice];
-    } else if ((choice === 1 || choice === 2) && removeOnPlain2 && priorityKey(curPriority, fl) === choice + 'P') {
+    } else if ((choice === 1 || choice === 2) && fl.includes('Priority')) {
+      // Plain 1 / plain 2 always means "without the Priority folder" — so
+      // tapping 1 on a 2P (or 1P) reminder gives plain 1, never 1P. Applies
+      // to single and bulk changes alike.
       // Tapping plain 1 on a 1P (or plain 2 on a 2P) takes it out of the
       // Priority folder — and, by the tag rules, P and PP come off with it.
       fl = fl.filter(f => !TAG_REMOVES.Priority.includes(f));
