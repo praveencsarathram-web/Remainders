@@ -507,6 +507,10 @@
     font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; color: var(--ink); background: var(--paper);
   }
   .queue-note { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 11px; color: var(--muted); margin-top: 12px; }
+  /* Speed: the browser skips laying out / drawing cards that are off-screen.
+     A card with its folder list open is drawn normally so the list isn't cut off. */
+  .reminder { content-visibility: auto; contain-intrinsic-size: auto 300px; }
+  .reminder:has(.folder-picker-list) { content-visibility: visible; }
 </style>
 </head>
 <body>
@@ -667,6 +671,9 @@
     if (candidate.getTime() <= now.getTime()) candidate.setDate(candidate.getDate() + 1);
     return candidate.toISOString();
   }
+  // Built once and reused — creating these on every card was slow.
+  const TIME_FMT = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
+  const DATE_FMT = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
   function fmtTime(iso) {
     if (!iso) return 'No time set';
     const d = new Date(iso);
@@ -675,10 +682,10 @@
     const sameDay = d.toDateString() === now.toDateString();
     const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
     const isTomorrow = d.toDateString() === tomorrow.toDateString();
-    const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    const timeStr = TIME_FMT.format(d);
     if (sameDay) return 'Today, ' + timeStr;
     if (isTomorrow) return 'Tomorrow, ' + timeStr;
-    const dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const dateStr = DATE_FMT.format(d);
     return dateStr + ', ' + timeStr;
   }
   function escapeHtml(str) {
@@ -953,7 +960,7 @@
       clearTimeout(pushRetryTimer);
       pushRetryAttempt = 0;
       // Short pause so several quick taps go up as one upload.
-      pushTimer = setTimeout(() => { pushTimer = null; pushToDrive(); }, 300);
+      pushTimer = setTimeout(() => { pushTimer = null; pushToDrive(); }, 150);
     } else {
       ensureConnected(); // reconnects, then uploads everything pending
     }
@@ -1363,8 +1370,10 @@
   }
   function openAddPopup() {
     showAddPopup = true;
-    addPriority = 1;
-    addFolders = ['General'];
+    // New reminders start on 1P (priority 1 + Priority folder).
+    const start = resolvePriorityChoice('1P', 1, ['General'], true);
+    addPriority = start.priority;
+    addFolders = start.folders;
     addPeople = [];
     openFolderPicker = null;
     addAnchorTime = new Date().toISOString();
@@ -2432,10 +2441,9 @@
     if (r.trashed) return false;
     if (!matchesSearch(r)) return false;
     // Each priority button shows only its own group: 1 never includes 1P,
-    // 2 never includes 2P. (The Praveen shortcut still shows all priority 1.)
+    // 2 never includes 2P — including when the Praveen shortcut is on.
     if (priorityFilter !== null) {
-      if (praveenToggleOn && priorityFilter === 1) { if (r.priority !== 1) return false; }
-      else if (priorityKey(r.priority, r.folders) !== priorityFilter) return false;
+      if (priorityKey(r.priority, r.folders) !== priorityFilter) return false;
     }
     if (dateFilterMode === 'today' && r.when) {
       const d = new Date(r.when);
@@ -2963,6 +2971,7 @@
     if (sidebarEl) sidebarEl.innerHTML = renderSidebar();
 
     wireEvents();
+    watchShowMore();
 
     if (savedFolderPickerKey !== null && openFolderPicker === savedFolderPickerKey) {
       const folderListAfter = document.querySelector('.folder-picker-list');
@@ -3120,9 +3129,24 @@
     `;
   }
 
-  const LIST_PAGE = 40;
+  const LIST_PAGE = 20;
   let listLimit = LIST_PAGE;
   let lastListFilterKey = '';
+  // Loads the next batch on its own when you scroll near the bottom, so the
+  // list feels continuous while only a small batch is drawn at a time.
+  let showMoreObserver = null;
+  function watchShowMore() {
+    if (showMoreObserver) { showMoreObserver.disconnect(); showMoreObserver = null; }
+    const btn = document.getElementById('show-more-btn');
+    if (!btn || !('IntersectionObserver' in window)) return;
+    showMoreObserver = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) {
+        showMoreObserver.disconnect(); showMoreObserver = null;
+        listLimit += LIST_PAGE; render();
+      }
+    }, { rootMargin: '600px 0px' });
+    showMoreObserver.observe(btn);
+  }
   function renderLists(active, done) {
     // Start back at the first page whenever the filters/search change.
     const filterKey = [searchQuery, priorityFilter, dateFilterMode, folderFilterSelection.join('|'), dueStateFilter, sortMode, pBothToggleOn, ppToggleOn].join('~');
@@ -4104,7 +4128,10 @@
   checkDue();
   // Check Drive for other devices' changes every 4 seconds (a tiny request;
   // the full file only downloads when something actually changed).
-  setInterval(() => { if (!document.hidden) pullFromDrive(); }, 4000);
+  setInterval(() => { if (!document.hidden) pullFromDrive(); }, 2000);
+  // Laptop: switching back to this window checks for changes straight away.
+  window.addEventListener('focus', () => { if (!document.hidden) pullFromDrive(); });
+  window.addEventListener('pageshow', () => { pullFromDrive(); });
   // If the connection ever drops, quietly reconnect on its own.
   setInterval(ensureConnected, 20000);
 
