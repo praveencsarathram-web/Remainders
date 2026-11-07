@@ -11,7 +11,8 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"></noscript>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root {
@@ -213,6 +214,8 @@
 
   .section-label { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 12px; color: var(--muted); margin: 22px 0 10px 4px; }
   .reminder-list { display: flex; flex-direction: column; gap: 8px; }
+  .reminder { content-visibility: auto; contain-intrinsic-size: auto 260px; }
+  .reminder:has(.folder-picker-panel) { content-visibility: visible; }
   .reminder {
     display: flex; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--line);
     border-radius: 12px; padding: 13px 14px; transition: opacity 0.2s ease, background 0.2s ease, border-color 0.2s ease;
@@ -498,6 +501,7 @@
     font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; white-space: nowrap;
   }
   .wa-btn:active { background: #1ebe5b; }
+  .copy-btn.copied { background: var(--ember) !important; color: #fff !important; }
   .wa-people-line { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 11.5px; color: var(--ink); margin-top: 4px; }
   .wa-sent-line { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 11px; color: #1a8f4c; margin-top: 2px; }
   .wa-choose-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
@@ -668,24 +672,50 @@
     if (candidate.getTime() <= now.getTime()) candidate.setDate(candidate.getDate() + 1);
     return candidate.toISOString();
   }
+  // Speed: parsing dates and building locale formatters is slow, so both
+  // are cached. Results are identical to the uncached versions.
+  const _timeCache = new Map();
+  function parseTime(iso) {
+    let t = _timeCache.get(iso);
+    if (t === undefined) {
+      t = new Date(iso).getTime();
+      if (_timeCache.size > 5000) _timeCache.clear();
+      _timeCache.set(iso, t);
+    }
+    return t;
+  }
+  const _fmtTimeOpts = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
+  const _fmtDateOpts = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+  let _fmtCache = new Map();
+  let _fmtCacheDay = '';
   function fmtTime(iso) {
     if (!iso) return 'No time set';
+    const now = new Date();
+    const today = now.toDateString();
+    if (today !== _fmtCacheDay) { _fmtCache = new Map(); _fmtCacheDay = today; }
+    const hit = _fmtCache.get(iso);
+    if (hit !== undefined) return hit;
+    const out = fmtTimeRaw(iso, now, today);
+    if (_fmtCache.size > 5000) _fmtCache.clear();
+    _fmtCache.set(iso, out);
+    return out;
+  }
+  function fmtTimeRaw(iso, now, today) {
     const d = new Date(iso);
     if (isNaN(d)) return 'No time set';
-    const now = new Date();
-    const sameDay = d.toDateString() === now.toDateString();
+    const sameDay = d.toDateString() === today;
     const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
     const isTomorrow = d.toDateString() === tomorrow.toDateString();
-    const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    const timeStr = _fmtTimeOpts.format(d);
     if (sameDay) return 'Today, ' + timeStr;
     if (isTomorrow) return 'Tomorrow, ' + timeStr;
-    const dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    return dateStr + ', ' + timeStr;
+    return _fmtDateOpts.format(d) + ', ' + timeStr;
   }
+  // Same output as the old DOM-based version, without creating an element each call.
+  const _escMap = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '\u00a0': '&nbsp;' };
   function escapeHtml(str) {
-    const d = document.createElement('div');
-    d.textContent = str;
-    return d.innerHTML;
+    if (str === null || str === undefined) return '';
+    return String(str).replace(/[&<>\u00a0]/g, ch => _escMap[ch]);
   }
   function reminderTitleColor(r) {
     if ((r.priority || 3) === 1) return '#FF0000';
@@ -870,7 +900,7 @@
   }
   function isDue(r) {
     if (!r.when) return false;
-    const t = new Date(r.when).getTime();
+    const t = parseTime(r.when);
     return !isNaN(t) && t <= Date.now();
   }
 
@@ -899,7 +929,10 @@
       }
     } catch (e) { reminders = []; folders = ['General']; }
     migrateStaleSuppressedFlags();
-    if (enforceTagRules(reminders, folders)) saveLocal();
+    const peopleSig = JSON.stringify(people);
+    people = scrubPeople(people);
+    const peopleWiped = JSON.stringify(people) !== peopleSig;
+    if (enforceTagRules(reminders, folders) || peopleWiped) saveLocal();
     loaded = true;
   }
 
@@ -933,10 +966,11 @@
   // which screen made the change.
   function pruneAlarmQueue() {
     const now = Date.now();
+    const byId = new Map(reminders.map(x => [x.id, x]));
     alarmQueue = alarmQueue.filter(id => {
-      const r = reminders.find(r => r.id === id);
+      const r = byId.get(id);
       if (!r || !r.when || r.trashed) return false;
-      const due = new Date(r.when).getTime();
+      const due = parseTime(r.when);
       if (isNaN(due) || due > now) return false;
       if (r.suppressedUntil === r.when) return false;
       if (r.done && (r.completedAt || 0) >= due) return false;
@@ -1125,6 +1159,13 @@
   }
   // People merge: newest edit wins; deleted people are kept as hidden
   // markers so a deletion on one device spreads instead of coming back.
+  // WhatsApp has been removed: every saved contact is wiped to a blank
+  // "deleted" marker (no name, no number). The marker is newer, so the
+  // deletion also spreads to Drive and other devices.
+  function scrubPeople(list) {
+    const now = Date.now();
+    return (list || []).map(x => (x.deleted && !x.name && !x.phone) ? x : { id: x.id, deleted: true, updated: Math.max(now, (x.updated || 0) + 1) });
+  }
   function mergePeople(local, remote) {
     const byId = new Map();
     (local || []).forEach(x => byId.set(x.id, x));
@@ -1132,7 +1173,7 @@
       const cur = byId.get(x.id);
       if (!cur || (x.updated || 0) > (cur.updated || 0)) byId.set(x.id, x);
     });
-    return Array.from(byId.values());
+    return scrubPeople(Array.from(byId.values()));
   }
   function parseRemote(text) {
     const parsed = JSON.parse(text || '[]');
@@ -1366,6 +1407,8 @@
     showAddPopup = true;
     addPriority = 1;
     addFolders = ['General'];
+    // Default to 1P = Priority 1 + Priority folder.
+    { const res = resolvePriorityChoice('1P', addPriority, addFolders, false); addPriority = res.priority; addFolders = res.folders; }
     addPeople = [];
     openFolderPicker = null;
     addAnchorTime = new Date().toISOString();
@@ -1933,6 +1976,31 @@
       </div>
     `;
   }
+  /* ---------------- Copy reminder text ---------------- */
+  function copyReminderText(id, btn) {
+    const r = reminders.find(x => x.id === id);
+    if (!r) return;
+    const text = r.title || '';
+    const done = () => {
+      if (!btn) return;
+      btn.textContent = 'Copied \u2713';
+      btn.classList.add('copied');
+      clearTimeout(btn._copyTimer);
+      btn._copyTimer = setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+    };
+    const fallback = () => {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed'; ta.style.top = '-1000px'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);
+      let ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta);
+      if (ok) done(); else window.prompt('Copy this reminder:', text);
+    };
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, fallback);
+    else fallback();
+  }
+
   /* ---------------- WhatsApp people ---------------- */
   function normalizePhone(raw) {
     let d = String(raw || '').replace(/\D/g, '');
@@ -2492,7 +2560,6 @@
       Priority: r.priority || 3,
       Due: r.when ? new Date(r.when).toLocaleString() : 'No time set',
       Folder: (r.folders && r.folders.length) ? r.folders.join(', ') : 'General',
-      'Send to': linkedPeople(r.people).map(pp => pp.name).join(', '),
       Status: r.done ? 'Completed' : 'Active'
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -2569,7 +2636,7 @@
         });
         save();
         render();
-        alert(`Imported ${imported} reminder${imported === 1 ? '' : 's'}.${skipped ? ` Skipped ${skipped} row${skipped === 1 ? '' : 's'} with no title.` : ''}${unknownNames.size ? ` These "Send to" names aren't in People, so they weren't linked: ${Array.from(unknownNames).join(', ')}.` : ''}`);
+        alert(`Imported ${imported} reminder${imported === 1 ? '' : 's'}.${skipped ? ` Skipped ${skipped} row${skipped === 1 ? '' : 's'} with no title.` : ''}`);
       } catch (err) {
         alert('Could not read that Excel file: ' + (err.message || err));
       }
@@ -2653,7 +2720,7 @@
     let anyUnchecked = false;
     reminders.forEach(r => {
       if (r.trashed) return;
-      if (r.done && r.when && isDue(r) && new Date(r.when).getTime() > (r.completedAt || 0)) {
+      if (r.done && r.when && isDue(r) && parseTime(r.when) > (r.completedAt || 0)) {
         r.done = false;
         r.completedAt = null;
         r.updated = Date.now();
@@ -2670,7 +2737,7 @@
       // pushing its time into the future actually stops the alerts.
       if (r.trashed) return;
       if (!r.when) return;
-      const due = new Date(r.when).getTime();
+      const due = parseTime(r.when);
       if (isNaN(due) || due > now) return;
       if (r.suppressedUntil === r.when) return;
       // Checked off after it became due → it's handled; don't pop it up.
@@ -2689,7 +2756,7 @@
       const a = byId.get(idA);
       const b = byId.get(idB);
       if (!a || !b) return 0;
-      return (popupRank(a) - popupRank(b)) || (new Date(a.when) - new Date(b.when));
+      return (popupRank(a) - popupRank(b)) || (parseTime(a.when) - parseTime(b.when));
     });
     if (newlyFired) {
       beep();
@@ -2783,7 +2850,7 @@
     return (r.folders && r.folders.length) ? r.folders[0] : 'General';
   }
   function timeOrInf(r) {
-    return r.when ? new Date(r.when).getTime() : Infinity;
+    return r.when ? parseTime(r.when) : Infinity;
   }
 
   /* =========================================================
@@ -2904,7 +2971,6 @@
             ${!viewingTrash && !viewingFolders && !viewingChangeHistory && !viewingPeople && selectMode ? `<button class="pill-btn select-toggle" id="deselect-all-btn">Deselect all</button>` : ''}
             <button class="pill-btn trash-toggle ${viewingTrash ? 'active' : ''}" id="trash-toggle-btn" title="Trash">&#128465; Trash${trashCount ? ` (${trashCount})` : ''}</button>
             <button class="pill-btn trash-toggle ${viewingFolders ? 'active' : ''}" id="folders-toggle-btn" title="Folders">&#128193; Folders</button>
-            <button class="pill-btn trash-toggle ${viewingPeople ? 'active' : ''}" id="people-toggle-btn" title="People for WhatsApp reminders">&#128100; People</button>
             <button class="pill-btn trash-toggle" id="import-excel-btn" title="Import reminders from Excel">&#128229; Import</button>
             <button class="pill-btn trash-toggle ${praveenToggleOn ? 'active' : ''}" id="praveen-folder-toggle-btn" title="Praveen folder"${praveenToggleOn ? ' style="background:#FFE600; color:#000000;"' : ''}>Praveen</button>
             <button class="search-toggle-btn ${pBothToggleOn ? 'active' : ''}" id="p-both-toggle-btn" title="Show reminders marked P" style="font-weight:700; font-family:'IBM Plex Sans',sans-serif;">P</button>
@@ -3033,8 +3099,7 @@
       { key: 'upcoming', label: 'Upcoming' },
       { key: 'trash', label: `Trash${trashCount ? ` (${trashCount})` : ''}` },
       { key: 'settings', label: 'Settings' },
-      { key: 'folders', label: 'Folders' },
-      { key: 'people', label: 'People' }
+      { key: 'folders', label: 'Folders' }
     ];
     return `
       <div class="sidebar-logo"><img src="${LOGO_URL}" alt="TLS Solutions" /></div>
@@ -3196,8 +3261,6 @@
             <p class="snooze-label" style="margin:10px 0 2px;">Folder</p>
             ${renderFolderPicker('editdraft', r.id, liveEditFolders || r.folders)}
             ${renderFolderShortcuts('editdraft', r.id, liveEditFolders || r.folders, previewPriority === 1)}
-            <p class="snooze-label" style="margin:10px 0 2px;">Send to (WhatsApp)</p>
-            ${renderPeoplePicker('editdraft', r.id)}
             <div class="edit-actions" style="margin-top:10px;">
               <button class="edit-save-btn" data-save-edit="${r.id}">Save</button>
               <button class="edit-cancel-btn" data-cancel-edit="${r.id}">Cancel</button>
@@ -3214,8 +3277,6 @@
         <div class="reminder-body">
           <p class="reminder-title" style="${reminderTitleStyle(r)}">${escapeHtml(r.title)}</p>
           <div class="reminder-time">${fmtTime(r.when)}${(!r.done && r.when && !due) ? ' <span class="not-due-tag">&middot; upcoming</span>' : ''}</div>
-          ${waInfoHtml(r)}
-          ${!selectMode ? waChooserHtml(r) : ''}
           ${selectMode ? `<div class="reminder-folders">&#128193; ${((r.folders && r.folders.length) ? r.folders : ['General']).map(f => escapeHtml(f)).join(', ')}</div>` : `
           <div class="quick-folder-row">
             <span class="priority-label">Folder</span>
@@ -3248,7 +3309,7 @@
         <div style="display:flex; flex-direction:column; gap:6px;">
           <button class="edit-btn" style="background:var(--ember-soft); color:var(--ember);" data-delete-from-card="${r.id}">Delete</button>
           <button class="edit-btn" data-edit-id="${r.id}">Edit</button>
-          ${waButtonHtml(r)}
+          <button class="edit-btn copy-btn" data-copy-id="${r.id}">Copy</button>
         </div>` : ''}
       </div>
     `;
@@ -3641,10 +3702,6 @@
             ${renderFolderPicker('add', null, addFolders)}
             ${renderFolderShortcuts('add', null, addFolders, addPriority === 1)}
           </div>
-          <p class="snooze-label" style="text-align:center; margin-top:2px;">Send to (WhatsApp)</p>
-          <div style="display:flex; flex-direction:column; align-items:center; margin-bottom:10px;">
-            ${renderPeoplePicker('add', null)}
-          </div>
           <input type="datetime-local" class="edit-time-input" id="add-popup-time" value="${timeValue}" />
           <p class="snooze-label" style="margin-top:10px;">Push time forward by</p>
           <div class="snooze-grid">
@@ -3738,10 +3795,6 @@
               ${renderFolderPicker('alarmeditdraft', r.id, alarmEditFolders || r.folders)}
               ${renderFolderShortcuts('alarmeditdraft', r.id, alarmEditFolders || r.folders, alarmEditPriority === 1)}
             </div>
-            <p class="snooze-label" style="text-align:center;">Send to (WhatsApp)</p>
-            <div style="display:flex; flex-direction:column; align-items:center;">
-              ${renderPeoplePicker('alarmeditdraft', r.id)}
-            </div>
             <div class="alarm-actions" style="margin-top:18px;">
               <button class="alarm-done-btn" id="alarm-edit-save" style="background:var(--ember);">Save</button>
               <button class="alarm-dismiss-btn" id="alarm-edit-cancel">Cancel</button>
@@ -3761,13 +3814,8 @@
           <div class="alarm-actions" style="margin-bottom:14px;">
             <button class="alarm-dismiss-btn" id="alarm-edit" data-alarm-id="${displayId}" style="flex:1;">Edit</button>
             <button class="alarm-dismiss-btn" id="alarm-delete" data-alarm-id="${displayId}" style="flex:1;">Delete</button>
+            <button class="alarm-dismiss-btn copy-btn" data-copy-id="${r.id}" style="flex:1;">Copy</button>
           </div>
-          ${linkedPeople(r.people).length ? `
-          <div style="display:flex; flex-direction:column; align-items:center; margin:-4px 0 14px;">
-            ${waButtonHtml(r)}
-            ${waChooserHtml(r)}
-            <div style="text-align:center;">${waInfoHtml(r)}</div>
-          </div>` : ''}
           <p class="snooze-label">Priority</p>
           <div class="priority-row" style="justify-content:center; margin-top:0 0 16px;">
             ${priorityRowHtml(priorityKey(r.priority, r.folders), () => `data-alarm-priority-id="${r.id}"`)}
@@ -4051,6 +4099,7 @@
   delegate('[data-voice-input-target]', el => (() => startVoiceInput(el.dataset.voiceInputTarget))());
   delegate('[data-delete-folder]', el => (() => requestDeleteFolder(el.dataset.deleteFolder))());
   delegate('[data-edit-folder]', el => (() => startEditFolder(el.dataset.editFolder))());
+  delegate('[data-copy-id]', el => copyReminderText(el.dataset.copyId, el));
   delegate('[data-wa-rid]', el => recordWaSent(el.dataset.waRid, el.dataset.waPid));
   delegate('[data-wa-chooser]', el => toggleWaChooser(el.dataset.waChooser));
   delegate('[data-person-toggle-context]', el => togglePersonForContext(el.dataset.personToggleContext, el.dataset.personToggleId));
