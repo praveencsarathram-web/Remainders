@@ -510,6 +510,19 @@
     flex: 1 1 140px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px;
     font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; color: var(--ink); background: var(--paper);
   }
+  .popup-mode-row { gap: 6px; }
+  .popup-mode-label { font-size: 12px; color: var(--muted); font-weight: 600; margin-right: 2px; }
+  .popup-mode-btn {
+    font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 12px; font-weight: 600;
+    border: 1.5px solid var(--line); background: var(--card); color: var(--ink); border-radius: 16px; padding: 5px 11px; cursor: pointer;
+  }
+  .popup-mode-btn.active { background: var(--ember); border-color: var(--ember); color: #ffffff; }
+  .popup-mode-btn.praveen.active { background: #FFE600; border-color: #FFE600; color: #000000; }
+  .popup-mode-badge {
+    display: inline-block; font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 11.5px; font-weight: 700;
+    padding: 4px 12px; border-radius: 14px; margin-bottom: 10px; background: var(--done-bg); color: var(--ink);
+  }
+  .popup-mode-badge.praveen { background: #FFE600; color: #000000; }
   .queue-note { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 11px; color: var(--muted); margin-top: 12px; }
 </style>
 </head>
@@ -904,11 +917,43 @@
     return !isNaN(t) && t <= Date.now();
   }
 
+  /* ---------------- popup mode (synced to every device) ---------------- */
+  // 'all' = every due reminder pops up; 'notpraveen' = everything except
+  // the Praveen folder; 'onlypraveen' = only the Praveen folder. The order
+  // is always the normal priority rule — the mode only decides who pops up.
+  const POPUP_MODES = ['all', 'notpraveen', 'onlypraveen'];
+  const POPUP_MODE_LABELS = { all: 'All', notpraveen: 'Except Praveen', onlypraveen: 'Only Praveen' };
+  let settings = { popupMode: 'all', popupModeUpdated: 0 };
+  function cleanSettings(s) {
+    const mode = s && POPUP_MODES.includes(s.popupMode) ? s.popupMode : 'all';
+    return { popupMode: mode, popupModeUpdated: (s && s.popupModeUpdated) || 0 };
+  }
+  // Newest change wins, so changing it on one device spreads to the others.
+  function mergeSettings(local, remote) {
+    const l = cleanSettings(local), r = cleanSettings(remote);
+    return r.popupModeUpdated > l.popupModeUpdated ? r : l;
+  }
+  function popupAllowed(r) {
+    const isPraveen = folderListOf(r.folders).includes('Praveen');
+    if (settings.popupMode === 'notpraveen') return !isPraveen;
+    if (settings.popupMode === 'onlypraveen') return isPraveen;
+    return true;
+  }
+  function setPopupMode(mode) {
+    if (!POPUP_MODES.includes(mode) || mode === settings.popupMode) return;
+    settings = { popupMode: mode, popupModeUpdated: Date.now() };
+    lockedAlarmId = null; lastAlarmUndo = null;
+    save();            // drops anything that no longer qualifies
+    checkDue(true);    // adds anything that now qualifies (no beep)
+    render();
+  }
+  function dataPayload() { return { reminders, folders, changeHistory, people, settings }; }
+
   /* ---------------- local persistence ---------------- */
   let dataRevision = 0;
   function saveLocal() {
     dataRevision++;
-    try { localStorage.setItem(LOCAL_KEY, JSON.stringify({ reminders, folders, changeHistory, people })); }
+    try { localStorage.setItem(LOCAL_KEY, JSON.stringify(dataPayload())); }
     catch (e) { console.error('Local save failed', e); }
   }
   function loadLocal() {
@@ -925,6 +970,7 @@
           folders = (Array.isArray(parsed.folders) && parsed.folders.length) ? parsed.folders : ['General'];
           changeHistory = Array.isArray(parsed.changeHistory) ? parsed.changeHistory : [];
           people = Array.isArray(parsed.people) ? parsed.people : [];
+          settings = cleanSettings(parsed.settings);
         }
       }
     } catch (e) { reminders = []; folders = ['General']; }
@@ -970,6 +1016,7 @@
     alarmQueue = alarmQueue.filter(id => {
       const r = byId.get(id);
       if (!r || !r.when || r.trashed) return false;
+      if (!popupAllowed(r)) return false;
       const due = parseTime(r.when);
       if (isNaN(due) || due > now) return false;
       if (r.suppressedUntil === r.when) return false;
@@ -1150,12 +1197,13 @@
 
   // Order-independent signature of the data, so two devices that hold the
   // same reminders in a different order don't keep re-uploading forever.
-  function dataSignature(rems, folds, hist, ppl) {
+  function dataSignature(rems, folds, hist, ppl, sett) {
     const r = rems.map(x => x.id + ':' + (x.version || 1) + ':' + (x.updated || 0)).sort().join(',');
     const f = folds.slice().sort().join(',');
     const h = hist.map(e => e.id + '|' + e.at).sort().join(',');
     const pp = (ppl || []).map(x => x.id + ':' + (x.updated || 0)).sort().join(',');
-    return r + '#' + f + '#' + h + '#' + pp;
+    const s = cleanSettings(sett);
+    return r + '#' + f + '#' + h + '#' + pp + '#' + s.popupMode + ':' + s.popupModeUpdated;
   }
   // People merge: newest edit wins; deleted people are kept as hidden
   // markers so a deletion on one device spreads instead of coming back.
@@ -1181,29 +1229,37 @@
       reminders: Array.isArray(parsed) ? parsed : (Array.isArray(parsed.reminders) ? parsed.reminders : []),
       folders: Array.isArray(parsed) ? [] : (Array.isArray(parsed.folders) ? parsed.folders : []),
       changeHistory: Array.isArray(parsed) ? [] : (Array.isArray(parsed.changeHistory) ? parsed.changeHistory : []),
-      people: Array.isArray(parsed) ? [] : (Array.isArray(parsed.people) ? parsed.people : [])
+      people: Array.isArray(parsed) ? [] : (Array.isArray(parsed.people) ? parsed.people : []),
+      settings: Array.isArray(parsed) ? null : (parsed.settings || null)
     };
   }
   // Merges Drive's copy into this device. Returns whether this device
   // changed, and whether Drive is missing anything this device has.
   function mergeRemote(remote) {
-    const before = dataSignature(reminders, folders, changeHistory, people);
+    const before = dataSignature(reminders, folders, changeHistory, people, settings);
     const merged = mergeReminders(reminders, remote.reminders);
     const mergedFolders = mergeFolders(folders, remote.folders);
     const mergedHistory = mergeChangeHistory(changeHistory, remote.changeHistory);
     const mergedPeople = mergePeople(people, remote.people);
-    const remoteSig = dataSignature(remote.reminders, remote.folders, remote.changeHistory, remote.people);
+    const mergedSettings = mergeSettings(settings, remote.settings);
+    const remoteSig = dataSignature(remote.reminders, remote.folders, remote.changeHistory, remote.people, remote.settings);
     enforceTagRules(merged, mergedFolders);
-    const after = dataSignature(merged, mergedFolders, mergedHistory, mergedPeople);
+    const after = dataSignature(merged, mergedFolders, mergedHistory, mergedPeople, mergedSettings);
     const localChanged = after !== before;
     if (localChanged) {
+      const modeChanged = mergedSettings.popupMode !== settings.popupMode;
       reminders = merged;
       folders = mergedFolders;
       changeHistory = mergedHistory;
       people = mergedPeople;
+      settings = mergedSettings;
+      if (modeChanged) { lockedAlarmId = null; lastAlarmUndo = null; }
       migrateStaleSuppressedFlags();
       pruneAlarmQueue();
       saveLocal();
+      // Another device switched the popup mode — pull in anything that
+      // now qualifies right away (silently), instead of waiting 10s.
+      if (modeChanged) setTimeout(() => checkDue(true), 0);
     }
     return { localChanged, remoteBehind: after !== remoteSig };
   }
@@ -1229,7 +1285,7 @@
         if (result.remoteBehind) await pushToDrive();
         else lastRemoteVersion = await getRemoteVersion();
       } else {
-        driveFileId = await createDriveFile(JSON.stringify({ reminders, folders, changeHistory, people }));
+        driveFileId = await createDriveFile(JSON.stringify(dataPayload()));
         lastRemoteVersion = await getRemoteVersion();
       }
       allSynced = true;
@@ -1252,7 +1308,7 @@
       setDriveStatus('syncing');
       if (!driveFileId) {
         const file = await findDriveFile();
-        driveFileId = file ? file.id : await createDriveFile(JSON.stringify({ reminders, folders, changeHistory, people }));
+        driveFileId = file ? file.id : await createDriveFile(JSON.stringify(dataPayload()));
       }
       // If another device wrote since we last looked, fold its changes in
       // first so this upload never wipes them out.
@@ -1263,7 +1319,7 @@
           if (res.localChanged) render();
         }
       }
-      const payload = JSON.stringify({ reminders, folders, changeHistory, people });
+      const payload = JSON.stringify(dataPayload());
       const newVersion = await updateDriveFile(driveFileId, payload);
       lastRemoteVersion = newVersion !== null ? newVersion : await getRemoteVersion();
       markSynced();
@@ -2645,7 +2701,7 @@
   }
 
   function downloadBackup() {
-    const blob = new Blob([JSON.stringify({ reminders, folders, changeHistory, people }, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(dataPayload(), null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -2678,6 +2734,7 @@
         folders = mergeFolders(folders, restoredFolders);
         changeHistory = mergeChangeHistory(changeHistory, restoredChangeHistory);
         people = mergePeople(people, restoredPeople);
+        if (restored && !Array.isArray(restored) && restored.settings) settings = mergeSettings(settings, restored.settings);
         save();
         render();
       } catch (e) {
@@ -2708,7 +2765,10 @@
     }
   }
 
-  function checkDue() {
+  // silent = true when called because the popup mode changed: newly
+  // included reminders join the popup line without a beep/notification.
+  function checkDue(silent) {
+    silent = silent === true;
     const now = Date.now();
 
     // Checking something off only "sticks" until its due time arrives — the
@@ -2742,6 +2802,8 @@
       if (r.suppressedUntil === r.when) return;
       // Checked off after it became due → it's handled; don't pop it up.
       if (r.done && (r.completedAt || 0) >= due) return;
+      // Popup mode: All / Except Praveen / Only Praveen.
+      if (!popupAllowed(r)) return;
       // Every priority (1-5) pops up once due.
       if (!alarmQueue.includes(r.id)) {
         alarmQueue.push(r.id);
@@ -2758,7 +2820,7 @@
       if (!a || !b) return 0;
       return (popupRank(a) - popupRank(b)) || (parseTime(a.when) - parseTime(b.when));
     });
-    if (newlyFired) {
+    if (newlyFired && !silent) {
       beep();
       newlyFiredReminders.forEach(notifyOS);
     }
@@ -2963,6 +3025,10 @@
             <button class="pill-btn settings-toggle" id="settings-toggle">${showSettings ? 'Close' : 'Sync'}</button>
             <button class="pill-btn alerts-toggle ${alertsPaused ? 'paused' : ''}" id="alerts-toggle" title="${alertsPaused ? 'Alerts paused — tap to resume' : 'Alerts on — tap to pause'}">${alertsPaused ? '\ud83d\udd15 Paused' : '\ud83d\udd14 Alerts'}</button>
             <button class="pill-btn trash-toggle ${viewingChangeHistory ? 'active' : ''}" id="change-history-toggle-btn" title="Recently changed reminders">&#128221; Changes${changeHistory.length ? ` (${changeHistory.length})` : ''}</button>
+          </div>
+          <div class="header-right-row popup-mode-row">
+            <span class="popup-mode-label">Popups:</span>
+            ${POPUP_MODES.map(m => `<button class="popup-mode-btn ${m === 'onlypraveen' ? 'praveen' : ''} ${settings.popupMode === m ? 'active' : ''}" data-popup-mode="${m}">${POPUP_MODE_LABELS[m]}</button>`).join('')}
           </div>
           <div class="header-right-row">
             ${!viewingTrash && !viewingFolders && !viewingChangeHistory && !viewingPeople && visibleCount ? `<button class="search-toggle-btn ${showSearchBar ? 'active' : ''}" id="search-toggle-btn" title="${showSearchBar ? 'Hide search' : 'Search'}">\ud83d\udd0d</button>` : ''}
@@ -3808,6 +3874,7 @@
     return `
       <div class="alarm-overlay">
         <div class="alarm-card">
+          <span class="popup-mode-badge ${settings.popupMode === 'onlypraveen' ? 'praveen' : ''}">Popups: ${POPUP_MODE_LABELS[settings.popupMode]}</span>
           <p class="alarm-title" style="font-size:22px; font-weight:700; color:${isP1Alert ? '#FF0000' : PRIORITY_META[priority]}; margin-bottom:10px;">Priority ${priority}</p>
           <p class="alarm-title" style="margin-top:-6px; ${reminderTitleStyle(r)}">${escapeHtml(r.title)}</p>
           <p class="alarm-time">Was due ${fmtTime(r.when)}</p>
@@ -3840,7 +3907,7 @@
             <button class="snooze-btn" data-snooze="300" data-alarm-id="${displayId}">5h</button>
             <button class="snooze-btn" data-snooze-abs="17" data-alarm-id="${displayId}">5 PM</button>
           </div>
-          ${alarmQueue.length > 1 ? `<p class="queue-note">${alarmQueue.length - 1} more waiting</p>` : ''}
+          ${alarmQueue.length > 1 ? `<p class="queue-note">${alarmQueue.length - 1} more waiting${settings.popupMode !== 'all' ? ' in this mode' : ''}</p>` : ''}
           ${lastAlarmUndo ? `<button class="alarm-dismiss-btn" id="alarm-previous-btn" style="margin-top:14px; width:100%; border-color:var(--ember); color:var(--ember);">&#8592; Previous (undo last)</button>` : ''}
           <button class="alarm-dismiss-btn" id="pause-alerts-btn" style="margin-top:14px; width:100%;">Pause all alert popups</button>
         </div>
@@ -4070,6 +4137,7 @@
   const delegatedClicks = [];
   function delegate(sel, fn) { delegatedClicks.push([sel, fn]); }
   delegate('#show-more-btn', () => { listLimit += LIST_PAGE; render(); });
+  delegate('[data-popup-mode]', el => setPopupMode(el.dataset.popupMode));
   delegate('[data-desktop-nav]', el => (() => goToDesktopNav(el.dataset.desktopNav))());
   delegate('[data-stat-filter]', el => (() => toggleDueStateFilter(el.dataset.statFilter))());
   delegate('[data-bump]', el => (() => { bumpAddTime(parseInt(el.dataset.bump, 10)); markSnoozeSelected(el); })());
@@ -4209,7 +4277,7 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       if (!accessToken) ensureConnected();
-      pullFromDrive().then(checkDue).catch(checkDue);
+      pullFromDrive().then(() => checkDue()).catch(() => checkDue());
     } else if (pushTimer && accessToken) {
       // Leaving the app with an unsent change — upload it right now
       // instead of waiting, so it isn't stuck on this phone.
