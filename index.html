@@ -934,7 +934,10 @@
     return r.popupModeUpdated > l.popupModeUpdated ? r : l;
   }
   function popupAllowed(r) {
-    const isPraveen = folderListOf(r.folders).includes('Praveen');
+    const fl = folderListOf(r.folders);
+    // PP and P reminders always pop up, whatever the mode.
+    if (fl.includes('PP') || fl.includes('P')) return true;
+    const isPraveen = fl.includes('Praveen');
     if (settings.popupMode === 'notpraveen') return !isPraveen;
     if (settings.popupMode === 'onlypraveen') return isPraveen;
     return true;
