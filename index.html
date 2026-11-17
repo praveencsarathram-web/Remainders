@@ -1032,6 +1032,7 @@
     allSynced = false;
     enforceTagRules(reminders, folders);
     pruneAlarmQueue();
+    pruneFolderRun();
     saveLocal();
     if (accessToken) {
       clearTimeout(pushTimer);
@@ -1259,6 +1260,7 @@
       if (modeChanged) { lockedAlarmId = null; lastAlarmUndo = null; }
       migrateStaleSuppressedFlags();
       pruneAlarmQueue();
+      pruneFolderRun();
       saveLocal();
       // Another device switched the popup mode — pull in anything that
       // now qualifies right away (silently), instead of waiting 10s.
@@ -2823,7 +2825,9 @@
       if (!a || !b) return 0;
       return (popupRank(a) - popupRank(b)) || (parseTime(a.when) - parseTime(b.when));
     });
-    if (newlyFired && !silent) {
+    // During a folder popup run nothing from outside interrupts — not even
+    // a beep. Anything that came due waits silently in the normal queue.
+    if (newlyFired && !silent && !folderRun) {
       beep();
       newlyFiredReminders.forEach(notifyOS);
     }
@@ -2845,7 +2849,8 @@
       done: r.done,
       completedAt: r.completedAt,
       alarmQueue: alarmQueue.slice(),
-      lockedAlarmId
+      lockedAlarmId,
+      folderIds: folderRun ? folderRun.ids.slice() : null
     };
   }
   function undoLastAlarmAction() {
@@ -2861,6 +2866,7 @@
       save();
     }
     alarmQueue = u.alarmQueue;
+    if (folderRun && u.folderIds) folderRun.ids = u.folderIds;
     lockedAlarmId = u.id;
     lastAlarmUndo = null;
     render();
@@ -2870,17 +2876,90 @@
     lastAlarmUndo = snapshotForUndo(id);
     const r = reminders.find(r => r.id === id);
     if (r) { r.when = new Date(Date.now() + minutes * 60000).toISOString(); r.suppressedUntil = null; r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title); save(); }
-    alarmQueue = alarmQueue.filter(qid => qid !== id); if (lockedAlarmId === id) lockedAlarmId = null; render();
+    alarmQueue = alarmQueue.filter(qid => qid !== id); if (lockedAlarmId === id) lockedAlarmId = null;
+    dropFromFolderRun(id); render();
   }
   function snoozeCurrentAbsolute(id, hour) {
     lastAlarmUndo = snapshotForUndo(id);
     const r = reminders.find(r => r.id === id);
     if (r) { r.when = nextOccurrenceISO(hour); r.suppressedUntil = null; r.updated = Date.now(); r.version = (r.version || 1) + 1; logChange(r.id, r.title); save(); }
-    alarmQueue = alarmQueue.filter(qid => qid !== id); if (lockedAlarmId === id) lockedAlarmId = null; render();
+    alarmQueue = alarmQueue.filter(qid => qid !== id); if (lockedAlarmId === id) lockedAlarmId = null;
+    dropFromFolderRun(id); render();
   }
   function togglePauseAlerts() {
     alertsPaused = !alertsPaused;
+    // Pausing stops a folder popup run too; resuming clears the "paused" note.
+    if (alertsPaused && folderRun) endFolderRun(false);
+    if (!alertsPaused) folderRunNote = '';
     render();
+  }
+
+  /* ---------------- Folder popup run ----------------
+     The "Pop up" button on a folder card shows every reminder in that
+     folder (due and upcoming), one at a time, in the normal priority
+     order. The list is fixed when the run starts; snoozing, deleting or
+     moving a reminder out of the folder takes it off the list. Nothing
+     from outside the folder pops up during the run. This device only. */
+  let folderRun = null;      // { folder, ids: [...], total }
+  let folderRunDone = null;  // folder name for the "All done" screen
+  let folderRunNote = '';    // message shown on the Folders screen
+  function inFolder(r, name) { return folderListOf(r.folders).includes(name); }
+  function folderRunList(name) {
+    return reminders
+      .filter(r => !r.trashed && inFolder(r, name))
+      .sort((a, b) => (queueRank(a) - queueRank(b)) || (timeOrInf(a) - timeOrInf(b)));
+  }
+  function startFolderRun(name) {
+    if (alertsPaused) {
+      folderRunNote = 'Alerts are paused. Resume alerts to start folder popups.';
+      render();
+      return;
+    }
+    folderRunNote = '';
+    const ids = folderRunList(name).map(r => r.id);
+    if (!ids.length) return;
+    folderRun = { folder: name, ids, total: ids.length };
+    folderRunDone = null;
+    lockedAlarmId = null; lastAlarmUndo = null;
+    alarmEditing = false; alarmEditFolders = null;
+    render();
+  }
+  function endFolderRun(showDone) {
+    const name = folderRun ? folderRun.folder : null;
+    folderRun = null;
+    lockedAlarmId = null; lastAlarmUndo = null;
+    alarmEditing = false; alarmEditFolders = null; alarmEditPriority = null;
+    folderRunDone = showDone ? name : null;
+    render();
+  }
+  // Drops anything deleted or moved out of the folder from the run.
+  function pruneFolderRun() {
+    if (!folderRun) return;
+    const byId = new Map(reminders.map(x => [x.id, x]));
+    folderRun.ids = folderRun.ids.filter(id => {
+      const r = byId.get(id);
+      return r && !r.trashed && inFolder(r, folderRun.folder);
+    });
+    if (!folderRun.ids.length) endFolderRun(true);
+  }
+  function dropFromFolderRun(id) {
+    if (!folderRun) return;
+    folderRun.ids = folderRun.ids.filter(x => x !== id);
+    if (!folderRun.ids.length) endFolderRun(true);
+  }
+  function renderFolderRunDone() {
+    return `
+      <div class="alarm-overlay">
+        <div class="alarm-card">
+          <div class="alarm-glyph">&#10003;</div>
+          <p class="alarm-title" style="font-size:20px; font-weight:700;">All done for ${escapeHtml(folderRunDone)}</p>
+          <p class="alarm-time">Normal popups are back on.</p>
+          <div class="alarm-actions">
+            <button class="alarm-done-btn" id="folder-run-done-close" style="background:var(--ember);">Close</button>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   // One ranking shared by the due popup and every list sort.
@@ -3089,7 +3168,8 @@
 
       ${selectedIds.size > 0 ? renderBulkBar() : ''}
       ${showAddPopup ? renderAddPopup(savedTitleValue, savedTimeValue) : ''}
-      ${alarmQueue.length && !alertsPaused && !editingId ? renderAlarm() : ''}
+      ${!alertsPaused && !editingId && !folderRunDone && (folderRun ? folderRun.ids.length : alarmQueue.length) ? renderAlarm() : ''}
+      ${folderRunDone ? renderFolderRunDone() : ''}
       ${showDeleteConfirm ? renderDeleteConfirm() : ''}
       ${showTrashDeleteConfirm ? renderTrashDeleteConfirm() : ''}
       ${showDeleteFolderConfirm ? renderDeleteFolderConfirm() : ''}
@@ -3647,6 +3727,7 @@
         <button class="pill-btn select-toggle" id="create-folder-btn">Create</button>
       </div>
       ${newFolderError ? `<p class="folder-error-note">${escapeHtml(newFolderError)}</p>` : ''}
+      ${folderRunNote ? `<p class="folder-error-note">${escapeHtml(folderRunNote)}</p>` : ''}
       <div class="reminder-list">
         ${displayFolders().map(f => {
           const count = reminders.filter(r => !r.trashed && ((r.folders && r.folders.length) ? r.folders : ['General']).includes(f)).length;
@@ -3670,10 +3751,12 @@
               <p class="reminder-title">${escapeHtml(f)}</p>
               <div class="reminder-time">${count} reminder${count === 1 ? '' : 's'}${dueCount ? `, Due ${dueCount}` : ''}</div>
             </div>
-            ${f !== 'General' ? `
+            ${(count || f !== 'General') ? `
             <div style="display:flex; flex-direction:column; gap:6px;">
+              ${count ? `<button class="edit-btn" style="background:var(--ember); color:#ffffff;" data-folder-popup="${escapeHtml(f)}" title="Pop up every reminder in this folder, by priority">&#128276; Pop up (${count})</button>` : ''}
+              ${f !== 'General' ? `
               <button class="edit-btn" data-edit-folder="${escapeHtml(f)}">Rename</button>
-              <button class="edit-btn" style="background:var(--ember-soft); color:var(--ember);" data-delete-folder="${escapeHtml(f)}">Delete</button>
+              <button class="edit-btn" style="background:var(--ember-soft); color:var(--ember);" data-delete-folder="${escapeHtml(f)}">Delete</button>` : ''}
             </div>` : ''}
           </div>
         `;
@@ -3810,8 +3893,13 @@
   }
 
   function renderAlarm() {
-    if (lockedAlarmId && !alarmQueue.includes(lockedAlarmId)) lockedAlarmId = null;
-    if (!lockedAlarmId) lockedAlarmId = alarmQueue[0];
+    if (folderRun) {
+      // Folder run: always the first reminder left on the folder's list.
+      lockedAlarmId = folderRun.ids[0];
+    } else {
+      if (lockedAlarmId && !alarmQueue.includes(lockedAlarmId)) lockedAlarmId = null;
+      if (!lockedAlarmId) lockedAlarmId = alarmQueue[0];
+    }
     const displayId = lockedAlarmId;
     const r = reminders.find(r => r.id === displayId);
     if (!r) { lockedAlarmId = null; return ''; }
@@ -3877,10 +3965,12 @@
     return `
       <div class="alarm-overlay">
         <div class="alarm-card">
-          <span class="popup-mode-badge ${settings.popupMode === 'onlypraveen' ? 'praveen' : ''}">Popups: ${POPUP_MODE_LABELS[settings.popupMode]}</span>
+          ${folderRun
+            ? `<span class="popup-mode-badge" style="background:var(--select-soft); color:var(--select);">&#128193; Folder: ${escapeHtml(folderRun.folder)} &middot; ${folderRun.total - folderRun.ids.length + 1} of ${folderRun.total}</span>`
+            : `<span class="popup-mode-badge ${settings.popupMode === 'onlypraveen' ? 'praveen' : ''}">Popups: ${POPUP_MODE_LABELS[settings.popupMode]}</span>`}
           <p class="alarm-title" style="font-size:22px; font-weight:700; color:${isP1Alert ? '#FF0000' : PRIORITY_META[priority]}; margin-bottom:10px;">Priority ${priority}</p>
           <p class="alarm-title" style="margin-top:-6px; ${reminderTitleStyle(r)}">${escapeHtml(r.title)}</p>
-          <p class="alarm-time">Was due ${fmtTime(r.when)}</p>
+          <p class="alarm-time">${!r.when ? 'No time set' : (isDue(r) ? 'Was due ' : 'Due ') + fmtTime(r.when) + (isDue(r) ? '' : ' &middot; upcoming')}</p>
           <div class="alarm-actions" style="margin-bottom:14px;">
             <button class="alarm-dismiss-btn" id="alarm-edit" data-alarm-id="${displayId}" style="flex:1;">Edit</button>
             <button class="alarm-dismiss-btn" id="alarm-delete" data-alarm-id="${displayId}" style="flex:1;">Delete</button>
@@ -3910,8 +4000,11 @@
             <button class="snooze-btn" data-snooze="300" data-alarm-id="${displayId}">5h</button>
             <button class="snooze-btn" data-snooze-abs="17" data-alarm-id="${displayId}">5 PM</button>
           </div>
-          ${alarmQueue.length > 1 ? `<p class="queue-note">${alarmQueue.length - 1} more waiting${settings.popupMode !== 'all' ? ' in this mode' : ''}</p>` : ''}
+          ${folderRun
+            ? `<p class="queue-note">${folderRun.ids.length - 1} more in ${escapeHtml(folderRun.folder)}</p>`
+            : (alarmQueue.length > 1 ? `<p class="queue-note">${alarmQueue.length - 1} more waiting${settings.popupMode !== 'all' ? ' in this mode' : ''}</p>` : '')}
           ${lastAlarmUndo ? `<button class="alarm-dismiss-btn" id="alarm-previous-btn" style="margin-top:14px; width:100%; border-color:var(--ember); color:var(--ember);">&#8592; Previous (undo last)</button>` : ''}
+          ${folderRun ? `<button class="alarm-dismiss-btn" id="exit-folder-run-btn" style="margin-top:14px; width:100%; border:1.5px solid var(--select); color:var(--select); font-weight:600;">Exit folder popups</button>` : ''}
           <button class="alarm-dismiss-btn" id="pause-alerts-btn" style="margin-top:14px; width:100%;">Pause all alert popups</button>
         </div>
       </div>
@@ -4169,6 +4262,9 @@
   delegate('[data-delete-from-card]', el => (() => isMultiTarget(el.dataset.deleteFromCard) ? deleteBulk() : deleteFromEdit(el.dataset.deleteFromCard))());
   delegate('[data-voice-input-target]', el => (() => startVoiceInput(el.dataset.voiceInputTarget))());
   delegate('[data-delete-folder]', el => (() => requestDeleteFolder(el.dataset.deleteFolder))());
+  delegate('[data-folder-popup]', el => startFolderRun(el.dataset.folderPopup));
+  delegate('#exit-folder-run-btn', () => endFolderRun(false));
+  delegate('#folder-run-done-close', () => { folderRunDone = null; render(); });
   delegate('[data-edit-folder]', el => (() => startEditFolder(el.dataset.editFolder))());
   delegate('[data-copy-id]', el => copyReminderText(el.dataset.copyId, el));
   delegate('[data-wa-rid]', el => recordWaSent(el.dataset.waRid, el.dataset.waPid));
