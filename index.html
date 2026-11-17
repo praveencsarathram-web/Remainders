@@ -481,8 +481,28 @@
 
   .bulk-bar-collapsed { flex-direction: row; align-items: center; justify-content: space-between; padding: 10px 16px; gap: 0; max-height: none; }
 
-  .alarm-overlay { position: fixed; inset: 0; background: rgba(28,26,23,0.55); display: flex; align-items: center; justify-content: center; z-index: 999; padding: 20px; }
-  .alarm-card { background: var(--card); border-radius: 18px; padding: 26px 22px 20px; width: 100%; max-width: 380px; text-align: center; }
+  /* The backdrop scrolls when the popup is taller than the window, and
+     margin:auto centres the card only when it fits — so the top and the
+     bottom of a tall popup are never cut off. */
+  .alarm-overlay { position: fixed; inset: 0; background: rgba(28,26,23,0.55); display: flex; align-items: flex-start; justify-content: center; z-index: 999; padding: 20px; overflow-y: auto; overscroll-behavior: contain; }
+  .alarm-card { background: var(--card); border-radius: 18px; padding: 26px 22px 20px; width: 100%; max-width: 380px; text-align: center; margin: auto; }
+  /* Laptops: a wider card keeps all 7 priority circles on one row, and on
+     shorter screens everything is tightened so the popup fits. */
+  @media (min-width: 900px) {
+    .alarm-card { max-width: 480px; }
+  }
+  @media (max-height: 820px) {
+    .alarm-overlay { padding: 10px; }
+    .alarm-card { padding: 16px 18px 14px; }
+    .alarm-glyph { width: 40px; height: 40px; font-size: 19px; margin-bottom: 8px; }
+    .alarm-title { font-size: 17px; }
+    .alarm-time { margin-bottom: 10px; }
+    .alarm-actions { margin-bottom: 6px; }
+    .alarm-dismiss-btn { padding: 8px 12px; }
+    .queue-note { margin-top: 8px; }
+    .alarm-card .snooze-btn { padding: 5px 4px; }
+    .alarm-card .alarm-dismiss-btn[style*="margin-top:14px"] { margin-top: 8px !important; }
+  }
   .alarm-glyph { width: 52px; height: 52px; border-radius: 50%; background: var(--ember-soft); color: var(--ember); display: flex; align-items: center; justify-content: center; margin: 0 auto 14px; font-size: 24px; }
   .alarm-title { font-size: 19px; margin: 0 0 4px; }
   .alarm-time { font-family: 'IBM Plex Sans', -apple-system, system-ui, sans-serif; font-size: 12.5px; color: var(--muted); margin: 0 0 20px; }
@@ -2978,6 +2998,24 @@
     groupIds = null; // the next 10 come straight in
     render();
   }
+  // TOM on a group row: snoozes just that reminder to this time tomorrow
+  // (24 hours from now, same as TOM on the reminder cards). It leaves the
+  // group; "Previous" brings it back.
+  function groupSnoozeOne(id, minutes) {
+    const r = reminders.find(x => x.id === id);
+    if (!r) return;
+    snapGroup([id]);
+    r.when = new Date(Date.now() + minutes * 60000).toISOString();
+    r.suppressedUntil = null; r.done = false; r.completedAt = null;
+    r.updated = Date.now(); r.version = (r.version || 1) + 1;
+    logChange(r.id, r.title);
+    groupHold.delete(id);
+    save();
+    alarmQueue = alarmQueue.filter(x => x !== id);
+    if (groupIds) groupIds = groupIds.filter(x => x !== id);
+    if (groupIds && !groupIds.length) groupIds = null; // next 10 come in
+    render();
+  }
   // PP / P buttons on a group row — same tag rules as everywhere else:
   // PP on → 1P + P + PP; P on → 1P + P; P off also takes PP off;
   // PP off leaves P on.
@@ -3100,6 +3138,7 @@
               ${groupTagChip(r, 'PP')}
               ${groupTagChip(r, 'P')}
               <button data-group-down="${r.id}" ${step ? '' : 'disabled'} title="${step ? 'Downgrade to ' + step : 'Already the lowest priority'}" style="border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:12px; padding:3px 12px; font-size:12px; font-weight:600; cursor:${step ? 'pointer' : 'default'}; ${step ? '' : 'opacity:0.4;'} font-family:inherit;">&#8595; ${step || 'lowest'}</button>
+              <button data-group-tom="${r.id}" title="Snooze this one to this time tomorrow" style="border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:12px; padding:3px 12px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">TOM</button>
             </span>
           </span>
           <button data-group-remove="${r.id}" title="Remove from group (back in 5 min)" aria-label="Remove from group" style="flex:0 0 auto; border:none; background:#fde8e8; color:#c62828; border-radius:8px; width:32px; height:30px; font-size:15px; cursor:pointer;">&#10005;</button>
@@ -4559,6 +4598,7 @@
   delegate('#group-back-btn', () => { groupRegular = false; alarmEditing = false; alarmEditFolders = null; render(); });
   delegate('[data-group-tag]', el => groupToggleTag(el.dataset.groupTagId, el.dataset.groupTag));
   delegate('[data-group-down]', el => groupDowngrade(el.dataset.groupDown));
+  delegate('[data-group-tom]', el => groupSnoozeOne(el.dataset.groupTom, 24 * 60));
   delegate('[data-group-snooze]', el => snoozeGroup(parseInt(el.dataset.groupSnooze, 10)));
   delegate('[data-group-remove]', el => removeFromGroup(el.dataset.groupRemove));
   delegate('#group-undo-btn', undoGroupAction);
