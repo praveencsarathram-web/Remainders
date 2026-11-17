@@ -3146,7 +3146,7 @@
     }).join('');
     return `
       <div class="alarm-overlay">
-        <div class="alarm-card" style="max-width:460px; max-height:calc(100vh - 40px); overflow-y:auto;">
+        <div class="alarm-card" style="max-width:460px;">
           <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
             ${badge}
             <span style="font-size:14px; font-weight:700;">Group &middot; ${ids.length}</span>
@@ -3321,6 +3321,19 @@
   let lastShownOrder = [];  // card order from the last unfrozen render
   let searchDebounce = null;
   let lastRenderAt = 0;
+  let lastRootHtml = null, lastSidebarHtml = null, lastPopKey = null;
+  // Identifies which popup is on screen, so its scroll is kept only while
+  // it's the same one (a new group of 10 starts at the top).
+  // Anything you do yourself always redraws, exactly as before; only
+  // background ticks that change nothing are skipped.
+  ['click', 'input', 'change', 'keydown'].forEach(ev =>
+    document.addEventListener(ev, () => { lastRootHtml = null; }, true));
+  function popupScrollKey() {
+    if (alertsPaused || !document.querySelector('.alarm-overlay')) return null;
+    if (folderRun) return 'f:' + folderRun.folder + ':' + (folderRun.ids[0] || '');
+    if (popupStyle === 'group' && !groupRegular) return 'g:' + (groupIds || []).join(',');
+    return 'r:' + (lockedAlarmId || '');
+  }
   function render() {
     if (renderScheduled) return;
     renderScheduled = true;
@@ -3332,6 +3345,15 @@
     // Skip this rebuild entirely; a render will run again once it closes.
     if (datetimePickerOpen) return;
     lastRenderAt = Date.now();
+
+    // Remember how far an open popup is scrolled, so background redraws
+    // (sync every few seconds, due check every 10 s) don't snap it back to
+    // the top — that's what made the popup look like it was shaking.
+    const popOverlayBefore = document.querySelector('.alarm-overlay');
+    const savedPopScroll = popOverlayBefore ? popOverlayBefore.scrollTop : 0;
+    const popCardBefore = popOverlayBefore ? popOverlayBefore.querySelector('.alarm-card') : null;
+    const savedPopCardScroll = popCardBefore ? popCardBefore.scrollTop : 0;
+    const savedPopKey = lastPopKey;
 
     // Remember how far the open folder list is scrolled, so the rebuild
     // below doesn't snap it back to the top on every tick.
@@ -3413,7 +3435,7 @@
     const visibleCount = reminders.filter(r => !r.trashed).length;
     const trashCount = reminders.filter(r => r.trashed).length;
 
-    root.innerHTML = `
+    const rootHtml = `
       <div class="brand-logo"><img src="${LOGO_URL}" alt="TLS Solutions" /></div>
       <div class="header">
         <h1>Reminders</h1>
@@ -3498,10 +3520,32 @@
       ${pendingBulkFolder ? renderBulkFolderConfirm() : ''}
     `;
 
+    // Nothing on screen changed → leave the page alone entirely. Most
+    // background ticks change nothing, and rebuilding identical content
+    // is what made the screen flicker.
     const sidebarEl = document.getElementById('app-sidebar');
-    if (sidebarEl) sidebarEl.innerHTML = renderSidebar();
+    const sidebarHtml = sidebarEl ? renderSidebar() : '';
+    if (rootHtml === lastRootHtml && sidebarHtml === lastSidebarHtml && root.childElementCount) {
+      lastPopKey = popupScrollKey();
+      return;
+    }
+    lastRootHtml = rootHtml; lastSidebarHtml = sidebarHtml;
+    root.innerHTML = rootHtml;
+    if (sidebarEl) sidebarEl.innerHTML = sidebarHtml;
 
     wireEvents();
+
+    // Same popup still open → put its scroll back where it was.
+    const newPopKey = popupScrollKey();
+    if (newPopKey && newPopKey === savedPopKey) {
+      const ov = document.querySelector('.alarm-overlay');
+      if (ov) {
+        ov.scrollTop = savedPopScroll;
+        const card = ov.querySelector('.alarm-card');
+        if (card) card.scrollTop = savedPopCardScroll;
+      }
+    }
+    lastPopKey = newPopKey;
 
     if (savedFolderPickerKey !== null && openFolderPicker === savedFolderPickerKey) {
       const folderListAfter = document.querySelector('.folder-picker-list');
