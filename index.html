@@ -946,7 +946,7 @@
     if (!POPUP_MODES.includes(mode) || mode === settings.popupMode) return;
     settings = { popupMode: mode, popupModeUpdated: Date.now() };
     lockedAlarmId = null; lastAlarmUndo = null;
-    groupIds = null; groupUndo = null; // next group follows the new mode
+    groupIds = null; groupUndo = null; groupRegular = false; // next group follows the new mode
     save();            // drops anything that no longer qualifies
     checkDue(true);    // adds anything that now qualifies (no beep)
     render();
@@ -2851,7 +2851,8 @@
       completedAt: r.completedAt,
       alarmQueue: alarmQueue.slice(),
       lockedAlarmId,
-      folderIds: folderRun ? folderRun.ids.slice() : null
+      folderIds: folderRun ? folderRun.ids.slice() : null,
+      groupIds: groupIds ? groupIds.slice() : null
     };
   }
   function undoLastAlarmAction() {
@@ -2868,6 +2869,7 @@
     }
     alarmQueue = u.alarmQueue;
     if (folderRun && u.folderIds) folderRun.ids = u.folderIds;
+    if (u.groupIds) groupIds = u.groupIds;
     lockedAlarmId = u.id;
     lastAlarmUndo = null;
     render();
@@ -2902,16 +2904,18 @@
   const GROUP_HOLD_MS = 5 * 60000;
   let groupIds = null;            // the reminders in the group on screen
   const groupHold = new Map();    // id → time it may rejoin a group
-  let groupUndo = null;           // last group snooze, for "Previous"
+  let groupUndo = null;           // last group action, for "Previous"
+  let groupRegular = false;       // regular popup walking this group's list
   function setPopupStyle(style) {
     popupStyle = style === 'group' ? 'group' : 'regular';
     try { localStorage.setItem(POPUP_STYLE_KEY, popupStyle); } catch (e) {}
+    groupRegular = false;
     alarmEditing = false; alarmEditFolders = null;
     render();
   }
+  function isGroupHeld(id) { return (groupHold.get(id) || 0) > Date.now(); }
   function groupEligibleIds() {
-    const now = Date.now();
-    return alarmQueue.filter(id => !((groupHold.get(id) || 0) > now));
+    return alarmQueue.filter(id => !isGroupHeld(id));
   }
   // Keeps the current group as-is (minus anything snoozed, deleted or
   // no longer allowed); builds the next 10 only when it's empty.
@@ -2926,7 +2930,30 @@
     }
     return groupIds;
   }
+  // "Switch to regular popup": this group's reminders plus the ones
+  // removed from a group (still on their 5-minute break), in the normal
+  // priority order. Never builds a new group while walking it.
+  function groupRegularList() {
+    if (groupIds) groupIds = groupIds.filter(id => alarmQueue.includes(id));
+    const g = groupIds || [];
+    return alarmQueue.filter(id => g.includes(id) || isGroupHeld(id));
+  }
+  // Snapshot before any group action so "Previous" can put it all back.
+  function snapGroup(ids) {
+    const byId = new Map(reminders.map(x => [x.id, x]));
+    groupUndo = {
+      items: ids.map(id => {
+        const r = byId.get(id);
+        return r ? { id, when: r.when, suppressedUntil: r.suppressedUntil, done: r.done, completedAt: r.completedAt, priority: r.priority, folders: (r.folders || []).slice() } : null;
+      }).filter(Boolean),
+      alarmQueue: alarmQueue.slice(),
+      groupIds: groupIds ? groupIds.slice() : null,
+      holds: new Map(groupHold),
+      groupRegular
+    };
+  }
   function removeFromGroup(id) {
+    snapGroup([]);
     groupHold.set(id, Date.now() + GROUP_HOLD_MS);
     if (groupIds) groupIds = groupIds.filter(x => x !== id);
     if (groupIds && !groupIds.length) groupIds = null;
@@ -2935,12 +2962,8 @@
   function snoozeGroup(minutes) {
     if (!groupIds || !groupIds.length) return;
     const ids = groupIds.slice();
+    snapGroup(ids);
     const byId = new Map(reminders.map(x => [x.id, x]));
-    groupUndo = {
-      ids,
-      items: ids.map(id => { const r = byId.get(id); return r ? { id, when: r.when, suppressedUntil: r.suppressedUntil, done: r.done, completedAt: r.completedAt } : null; }).filter(Boolean),
-      alarmQueue: alarmQueue.slice()
-    };
     const when = new Date(Date.now() + minutes * 60000).toISOString();
     ids.forEach(id => {
       const r = byId.get(id);
@@ -2955,7 +2978,53 @@
     groupIds = null; // the next 10 come straight in
     render();
   }
-  function undoGroupSnooze() {
+  // PP / P buttons on a group row — same tag rules as everywhere else:
+  // PP on → 1P + P + PP; P on → 1P + P; P off also takes PP off;
+  // PP off leaves P on.
+  function groupToggleTag(id, tag) {
+    const r = reminders.find(x => x.id === id);
+    if (!r) return;
+    snapGroup([id]);
+    const turningOn = !folderListOf(r.folders).includes(tag);
+    const fl = applyTagToggle(r.folders, tag, true);
+    if (turningOn) r.priority = 1;
+    r.folders = fl;
+    r.updated = Date.now(); r.version = (r.version || 1) + 1;
+    logChange(r.id, r.title);
+    save();
+    render();
+  }
+  // ↓ button: 1P → 1 → 2P → 2 → 3 → 4 → 5. Going from 1P to 1 takes the
+  // reminder out of the Priority folder, so P and PP come off with it.
+  const GROUP_LADDER = ['1P', '1', '2P', '2', '3', '4', '5'];
+  function groupNextStep(r) {
+    const i = GROUP_LADDER.indexOf(String(priorityKey(r.priority, r.folders)));
+    return (i >= 0 && i < GROUP_LADDER.length - 1) ? GROUP_LADDER[i + 1] : null;
+  }
+  function groupDowngrade(id) {
+    const r = reminders.find(x => x.id === id);
+    if (!r) return;
+    const step = groupNextStep(r);
+    if (!step) return;
+    snapGroup([id]);
+    const pr = parseInt(step, 10);
+    let fl = (r.folders || []).slice();
+    if (step.endsWith('P')) {
+      ensurePriorityFolderExists();
+      if (!fl.includes('Priority')) fl.push('Priority');
+    } else {
+      fl = fl.filter(f => !TAG_REMOVES.Priority.includes(f));
+    }
+    if (pr !== 1) fl = fl.filter(f => f !== 'P' && f !== 'PP');
+    if (!fl.length) fl = ['General'];
+    r.priority = pr;
+    r.folders = fl;
+    r.updated = Date.now(); r.version = (r.version || 1) + 1;
+    logChange(r.id, r.title);
+    save();
+    render();
+  }
+  function undoGroupAction() {
     if (!groupUndo) return;
     const u = groupUndo;
     const byId = new Map(reminders.map(x => [x.id, x]));
@@ -2964,13 +3033,16 @@
       if (!r) return;
       r.when = s.when; r.suppressedUntil = s.suppressedUntil;
       r.done = s.done; r.completedAt = s.completedAt;
+      r.priority = s.priority; r.folders = s.folders.slice();
       r.updated = Date.now(); r.version = (r.version || 1) + 1;
     });
-    save();
+    if (u.items.length) save();
     alarmQueue = u.alarmQueue.filter(id => byId.has(id));
     checkDue(true); // re-sorts and re-adds anything that qualifies
-    groupIds = u.ids.filter(id => alarmQueue.includes(id));
-    if (!groupIds.length) groupIds = null;
+    groupHold.clear(); u.holds.forEach((v, k) => groupHold.set(k, v));
+    groupIds = u.groupIds ? u.groupIds.filter(id => alarmQueue.includes(id)) : null;
+    if (groupIds && !groupIds.length) groupIds = null;
+    groupRegular = u.groupRegular;
     groupUndo = null;
     render();
   }
@@ -2979,6 +3051,11 @@
     if (fl.includes('PP')) return 'PP';
     if (fl.includes('P')) return 'P';
     return String(priorityKey(r.priority, r.folders));
+  }
+  const TAG_BLUE = '#185FA5', TAG_BLUE_FILL = '#378ADD', TAG_BLUE_SOFT = '#E6F1FB';
+  function groupTagChip(r, tag) {
+    const on = folderListOf(r.folders).includes(tag);
+    return `<button data-group-tag="${tag}" data-group-tag-id="${r.id}" title="${on ? 'Remove ' + tag : 'Add ' + tag}" style="border:1.5px solid ${on ? TAG_BLUE_FILL : 'var(--line)'}; background:${on ? TAG_BLUE_FILL : 'transparent'}; color:${on ? '#ffffff' : 'var(--muted)'}; border-radius:12px; padding:3px 12px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">${tag}</button>`;
   }
   function renderGroupAlarm() {
     const ids = ensureGroup();
@@ -3001,22 +3078,29 @@
         </div>`;
     }
     const byId = new Map(reminders.map(x => [x.id, x]));
-    const now = Date.now();
-    const held = alarmQueue.filter(id => !ids.includes(id) && (groupHold.get(id) || 0) > now).length;
+    const held = alarmQueue.filter(id => !ids.includes(id) && isGroupHeld(id)).length;
     const after = alarmQueue.length - ids.length - held;
     const rows = ids.map(id => {
       const r = byId.get(id);
       if (!r) return '';
+      const fl = folderListOf(r.folders);
       const label = groupPriorityLabel(r);
       const base = r.priority || 3;
-      const red = label === 'PP' || label === 'P' || base === 1;
-      const color = red ? '#FF0000' : PRIORITY_META[base];
+      const isTag = fl.includes('P') || fl.includes('PP');
+      const color = isTag ? TAG_BLUE : (base === 1 ? '#FF0000' : PRIORITY_META[base]);
+      const tagLine = isTag ? ` &middot; 1P${fl.includes('P') ? ' + P' : ''}${fl.includes('PP') ? ' + PP' : ''}` : '';
+      const step = groupNextStep(r);
       return `
-        <div style="display:flex; align-items:center; gap:10px; padding:8px 2px; border-bottom:1px solid var(--line); text-align:left;">
-          <span style="flex:0 0 auto; min-width:34px; height:28px; border-radius:14px; border:2px solid ${color}; color:${color}; font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center; padding:0 4px;">${escapeHtml(label)}</span>
+        <div style="display:flex; align-items:flex-start; gap:10px; padding:9px 2px; border-bottom:1px solid var(--line); text-align:left;">
+          <span style="flex:0 0 auto; min-width:34px; height:28px; margin-top:2px; border-radius:14px; border:2px solid ${isTag ? TAG_BLUE_FILL : color}; color:${color}; ${isTag ? `background:${TAG_BLUE_SOFT};` : ''} font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center; padding:0 4px;">${escapeHtml(label)}</span>
           <span style="flex:1; min-width:0;">
             <span style="display:block; font-size:14px; ${base === 1 ? 'color:#FF0000;' : ''} ${reminderTitleStyle(r)} overflow-wrap:anywhere;">${escapeHtml(r.title)}</span>
-            <span style="display:block; font-size:11.5px; color:var(--muted);">Was due ${fmtTime(r.when)}</span>
+            <span style="display:block; font-size:11.5px; color:var(--muted);">Was due ${fmtTime(r.when)}${tagLine}</span>
+            <span style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
+              ${groupTagChip(r, 'PP')}
+              ${groupTagChip(r, 'P')}
+              <button data-group-down="${r.id}" ${step ? '' : 'disabled'} title="${step ? 'Downgrade to ' + step : 'Already the lowest priority'}" style="border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:12px; padding:3px 12px; font-size:12px; font-weight:600; cursor:${step ? 'pointer' : 'default'}; ${step ? '' : 'opacity:0.4;'} font-family:inherit;">&#8595; ${step || 'lowest'}</button>
+            </span>
           </span>
           <button data-group-remove="${r.id}" title="Remove from group (back in 5 min)" aria-label="Remove from group" style="flex:0 0 auto; border:none; background:#fde8e8; color:#c62828; border-radius:8px; width:32px; height:30px; font-size:15px; cursor:pointer;">&#10005;</button>
         </div>`;
@@ -3037,16 +3121,24 @@
             <button class="snooze-btn" data-group-snooze="30">30m</button>
             <button class="snooze-btn" data-group-snooze="60">1h</button>
           </div>
-          <p class="queue-note">${Math.max(0, after)} more after this group${held ? ` &middot; ${held} removed (back in group after 5 min)` : ''}</p>
+          <p class="queue-note">${Math.max(0, after)} more after this group${held ? ` &middot; ${held} removed (in regular popup now, back in group after 5 min)` : ''}</p>
           ${footer}
         </div>
       </div>`;
   }
-  // What the popup area shows: folder run → group → regular.
+  // What the popup area shows: folder run → group (or its regular walk) → regular.
   function renderPopupArea() {
     if (folderRun) return folderRun.ids.length ? renderAlarm() : '';
-    if (!alarmQueue.length) return '';
-    if (popupStyle === 'group' && !alarmEditing) return renderGroupAlarm();
+    if (!alarmQueue.length) { groupRegular = false; return ''; }
+    if (popupStyle === 'group') {
+      if (groupRegular) {
+        if (groupRegularList().length) return renderAlarm();
+        // Finished this group's list → the next 10 come in.
+        groupRegular = false; groupIds = null; lockedAlarmId = null;
+        alarmEditing = false; alarmEditFolders = null;
+      }
+      return renderGroupAlarm();
+    }
     return renderAlarm();
   }
 
@@ -3296,11 +3388,6 @@
           <div class="header-right-row popup-mode-row">
             <span class="popup-mode-label">Popups:</span>
             ${POPUP_MODES.map(m => `<button class="popup-mode-btn ${m === 'onlypraveen' ? 'praveen' : ''} ${settings.popupMode === m ? 'active' : ''}" data-popup-mode="${m}">${POPUP_MODE_LABELS[m]}</button>`).join('')}
-          </div>
-          <div class="header-right-row popup-mode-row">
-            <span class="popup-mode-label">Style:</span>
-            <button class="popup-mode-btn ${popupStyle === 'regular' ? 'active' : ''}" data-popup-style="regular">Regular</button>
-            <button class="popup-mode-btn ${popupStyle === 'group' ? 'active' : ''}" data-popup-style="group">Group</button>
           </div>
           <div class="header-right-row">
             ${!viewingTrash && !viewingFolders && !viewingChangeHistory && !viewingPeople && visibleCount ? `<button class="search-toggle-btn ${showSearchBar ? 'active' : ''}" id="search-toggle-btn" title="${showSearchBar ? 'Hide search' : 'Search'}">\ud83d\udd0d</button>` : ''}
@@ -4087,11 +4174,17 @@
     if (folderRun) {
       // Folder run: always the first reminder left on the folder's list.
       lockedAlarmId = folderRun.ids[0];
+    } else if (popupStyle === 'group' && groupRegular) {
+      // Walking this group's list (plus removed ones) one by one.
+      const L = groupRegularList();
+      if (!L.includes(lockedAlarmId)) lockedAlarmId = L[0];
     } else {
       if (lockedAlarmId && !alarmQueue.includes(lockedAlarmId)) lockedAlarmId = null;
       if (!lockedAlarmId) lockedAlarmId = alarmQueue[0];
     }
     const displayId = lockedAlarmId;
+    const inGroupWalk = !folderRun && popupStyle === 'group' && groupRegular;
+    const groupWalk = inGroupWalk ? groupRegularList() : null;
     const r = reminders.find(r => r.id === displayId);
     if (!r) { lockedAlarmId = null; return ''; }
 
@@ -4158,13 +4251,15 @@
         <div class="alarm-card">
           ${folderRun
             ? `<span class="popup-mode-badge" style="background:var(--select-soft); color:var(--select);">&#128193; Folder: ${escapeHtml(folderRun.folder)} &middot; ${folderRun.total - folderRun.ids.length + 1} of ${folderRun.total}</span>`
+            : inGroupWalk
+            ? `<span class="popup-mode-badge" style="background:var(--select-soft); color:var(--select);">Group: ${groupWalk.indexOf(displayId) + 1} of ${groupWalk.length}</span>`
             : `<div style="display:flex; justify-content:center; align-items:center; gap:8px; flex-wrap:wrap;">
                 <span class="popup-mode-badge ${settings.popupMode === 'onlypraveen' ? 'praveen' : ''}">Popups: ${POPUP_MODE_LABELS[settings.popupMode]}</span>
                 ${(() => { const n = Math.min(GROUP_SIZE, groupEligibleIds().length); return n ? `<button class="popup-mode-btn" id="regular-to-group" title="Show up to 10 reminders at once">Group (${n})</button>` : ''; })()}
               </div>`}
           <p class="alarm-title" style="font-size:22px; font-weight:700; color:${isP1Alert ? '#FF0000' : PRIORITY_META[priority]}; margin-bottom:10px;">Priority ${priority}</p>
           <p class="alarm-title" style="margin-top:-6px; ${reminderTitleStyle(r)}">${escapeHtml(r.title)}</p>
-          <p class="alarm-time">${!r.when ? 'No time set' : (isDue(r) ? 'Was due ' : 'Due ') + fmtTime(r.when) + (isDue(r) ? '' : ' &middot; upcoming')}</p>
+          <p class="alarm-time">${!r.when ? 'No time set' : (isDue(r) ? 'Was due ' : 'Due ') + fmtTime(r.when) + (isDue(r) ? '' : ' &middot; upcoming')}${inGroupWalk && !(groupIds || []).includes(displayId) ? ' &middot; removed from group' : ''}</p>
           <div class="alarm-actions" style="margin-bottom:14px;">
             <button class="alarm-dismiss-btn" id="alarm-edit" data-alarm-id="${displayId}" style="flex:1;">Edit</button>
             <button class="alarm-dismiss-btn" id="alarm-delete" data-alarm-id="${displayId}" style="flex:1;">Delete</button>
@@ -4196,8 +4291,10 @@
           </div>
           ${folderRun
             ? `<p class="queue-note">${folderRun.ids.length - 1} more in ${escapeHtml(folderRun.folder)}</p>`
+            : inGroupWalk ? `<p class="queue-note">${groupWalk.length - 1} more in this group</p>`
             : (alarmQueue.length > 1 ? `<p class="queue-note">${alarmQueue.length - 1} more waiting${settings.popupMode !== 'all' ? ' in this mode' : ''}</p>` : '')}
           ${lastAlarmUndo ? `<button class="alarm-dismiss-btn" id="alarm-previous-btn" style="margin-top:14px; width:100%; border-color:var(--ember); color:var(--ember);">&#8592; Previous (undo last)</button>` : ''}
+          ${inGroupWalk ? `<button class="alarm-dismiss-btn" id="group-back-btn" style="margin-top:14px; width:100%; border:1.5px solid var(--select); color:var(--select); font-weight:600;">Back to group</button>` : ''}
           ${folderRun ? `<button class="alarm-dismiss-btn" id="exit-folder-run-btn" style="margin-top:14px; width:100%; border:1.5px solid var(--select); color:var(--select); font-weight:600;">Exit folder popups</button>` : ''}
           <button class="alarm-dismiss-btn" id="pause-alerts-btn" style="margin-top:14px; width:100%;">Pause all alert popups</button>
         </div>
@@ -4457,12 +4554,14 @@
   delegate('[data-voice-input-target]', el => (() => startVoiceInput(el.dataset.voiceInputTarget))());
   delegate('[data-delete-folder]', el => (() => requestDeleteFolder(el.dataset.deleteFolder))());
   delegate('[data-folder-popup]', el => startFolderRun(el.dataset.folderPopup));
-  delegate('[data-popup-style]', el => setPopupStyle(el.dataset.popupStyle));
   delegate('#regular-to-group', () => setPopupStyle('group'));
-  delegate('#group-to-regular', () => setPopupStyle('regular'));
+  delegate('#group-to-regular', () => { groupRegular = true; lockedAlarmId = null; lastAlarmUndo = null; render(); });
+  delegate('#group-back-btn', () => { groupRegular = false; alarmEditing = false; alarmEditFolders = null; render(); });
+  delegate('[data-group-tag]', el => groupToggleTag(el.dataset.groupTagId, el.dataset.groupTag));
+  delegate('[data-group-down]', el => groupDowngrade(el.dataset.groupDown));
   delegate('[data-group-snooze]', el => snoozeGroup(parseInt(el.dataset.groupSnooze, 10)));
   delegate('[data-group-remove]', el => removeFromGroup(el.dataset.groupRemove));
-  delegate('#group-undo-btn', undoGroupSnooze);
+  delegate('#group-undo-btn', undoGroupAction);
   delegate('#exit-folder-run-btn', () => endFolderRun(false));
   delegate('#folder-run-done-close', () => { folderRunDone = null; render(); });
   delegate('#folder-run-resume-btn', () => { const name = folderRunPausedAsk; folderRunPausedAsk = null; alertsPaused = false; folderRunNote = ''; startFolderRun(name); });
