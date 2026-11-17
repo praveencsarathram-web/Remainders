@@ -2903,6 +2903,22 @@
   let folderRun = null;      // { folder, ids: [...], total }
   let folderRunDone = null;  // folder name for the "All done" screen
   let folderRunNote = '';    // message shown on the Folders screen
+  let folderRunPausedAsk = null; // folder name waiting on "Resume alerts?"
+  function renderFolderRunPausedAsk() {
+    return `
+      <div class="alarm-overlay">
+        <div class="alarm-card">
+          <div class="alarm-glyph">&#128277;</div>
+          <p class="alarm-title" style="font-size:20px; font-weight:700;">Alerts are paused</p>
+          <p class="alarm-time">Resume alerts to pop up <b>${escapeHtml(folderRunPausedAsk)}</b>.</p>
+          <div class="alarm-actions">
+            <button class="alarm-done-btn" id="folder-run-resume-btn" style="background:var(--ember);">Resume alerts and pop up</button>
+            <button class="alarm-dismiss-btn" id="folder-run-resume-cancel">Cancel</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
   function inFolder(r, name) { return folderListOf(r.folders).includes(name); }
   function folderRunList(name) {
     return reminders
@@ -2911,11 +2927,16 @@
   }
   function startFolderRun(name) {
     if (alertsPaused) {
-      folderRunNote = 'Alerts are paused. Resume alerts to start folder popups.';
+      // Ask in a popup — a note at the top of the list is easy to miss
+      // when you've scrolled down to the folder.
+      folderRunPausedAsk = name;
       render();
       return;
     }
     folderRunNote = '';
+    folderRunPausedAsk = null;
+    // An inline edit left open elsewhere would hide every popup.
+    if (editingId) { editingId = null; liveEditTitle = null; liveEditTime = null; liveEditPriority = null; liveEditFolders = null; liveEditPeople = null; editAnchorTime = null; }
     const ids = folderRunList(name).map(r => r.id);
     if (!ids.length) return;
     folderRun = { folder: name, ids, total: ids.length };
@@ -3170,6 +3191,7 @@
       ${showAddPopup ? renderAddPopup(savedTitleValue, savedTimeValue) : ''}
       ${!alertsPaused && !editingId && !folderRunDone && (folderRun ? folderRun.ids.length : alarmQueue.length) ? renderAlarm() : ''}
       ${folderRunDone ? renderFolderRunDone() : ''}
+      ${folderRunPausedAsk ? renderFolderRunPausedAsk() : ''}
       ${showDeleteConfirm ? renderDeleteConfirm() : ''}
       ${showTrashDeleteConfirm ? renderTrashDeleteConfirm() : ''}
       ${showDeleteFolderConfirm ? renderDeleteFolderConfirm() : ''}
@@ -4265,6 +4287,8 @@
   delegate('[data-folder-popup]', el => startFolderRun(el.dataset.folderPopup));
   delegate('#exit-folder-run-btn', () => endFolderRun(false));
   delegate('#folder-run-done-close', () => { folderRunDone = null; render(); });
+  delegate('#folder-run-resume-btn', () => { const name = folderRunPausedAsk; folderRunPausedAsk = null; alertsPaused = false; folderRunNote = ''; startFolderRun(name); });
+  delegate('#folder-run-resume-cancel', () => { folderRunPausedAsk = null; render(); });
   delegate('[data-edit-folder]', el => (() => startEditFolder(el.dataset.editFolder))());
   delegate('[data-copy-id]', el => copyReminderText(el.dataset.copyId, el));
   delegate('[data-wa-rid]', el => recordWaSent(el.dataset.waRid, el.dataset.waPid));
