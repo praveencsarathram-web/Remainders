@@ -3067,6 +3067,24 @@
     save();
     render();
   }
+  let pendingGroup4AM = null; // reminder id waiting on the 4 AM "Are you sure?"
+  function renderGroup4AMConfirm() {
+    const r = reminders.find(x => x.id === pendingGroup4AM);
+    if (!r) { pendingGroup4AM = null; return ''; }
+    return `
+      <div class="alarm-overlay">
+        <div class="alarm-card">
+          <div class="alarm-glyph">?</div>
+          <p class="alarm-title" style="font-size:24px; font-weight:700; margin:6px 0 4px;">Are you sure?</p>
+          <p class="alarm-time" style="font-size:16px;">Snooze <b>${escapeHtml(r.title)}</b> to 4 AM</p>
+          <p class="alarm-time" style="font-size:16px;">Next time: <b>${fmtTime(nextOccurrenceISO(4))}</b></p>
+          <div class="alarm-actions">
+            <button class="alarm-done-btn" id="confirm-group-4am-btn" style="background:var(--ember);">Yes, 4 AM</button>
+            <button class="alarm-dismiss-btn" id="cancel-group-4am-btn">Cancel</button>
+          </div>
+        </div>
+      </div>`;
+  }
   function undoGroupAction() {
     if (!groupUndo) return;
     const u = groupUndo;
@@ -3143,8 +3161,8 @@
               ${groupTagChip(r, 'PP')}
               ${groupTagChip(r, 'P')}
               <button data-group-down="${r.id}" ${step ? '' : 'disabled'} title="${step ? 'Downgrade to ' + step : 'Already the lowest priority'}" style="border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:12px; padding:3px 12px; font-size:12px; font-weight:600; cursor:${step ? 'pointer' : 'default'}; ${step ? '' : 'opacity:0.4;'} font-family:inherit;">&#8595; ${step || 'lowest'}</button>
-              <button data-group-one-min="120" data-group-one-id="${r.id}" title="Snooze this one for 2 hours" style="border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:12px; padding:3px 12px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">2h</button>
-              <button data-group-one-abs="4" data-group-one-id="${r.id}" title="Snooze this one to the next 4 AM" style="border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:12px; padding:3px 12px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">4 AM</button>
+              ${[[15, '15m'], [30, '30m'], [60, '1h'], [120, '2h']].map(([m, lbl]) => `<button data-group-one-min="${m}" data-group-one-id="${r.id}" title="Snooze this one for ${lbl}" style="border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:12px; padding:3px 10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">${lbl}</button>`).join('')}
+              <button data-group-four-am-ask="${r.id}" title="Snooze this one to the next 4 AM" style="border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:12px; padding:3px 12px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">4 AM</button>
             </span>
           </span>
           <button data-group-remove="${r.id}" title="Remove from group (back in 5 min)" aria-label="Remove from group" style="flex:0 0 auto; border:none; background:#fde8e8; color:#c62828; border-radius:8px; width:32px; height:30px; font-size:15px; cursor:pointer;">&#10005;</button>
@@ -3521,6 +3539,7 @@
       ${pendingBulkPriority !== null ? renderBulkPriorityConfirm() : ''}
       ${pendingBulkSnooze ? renderBulkSnoozeConfirm() : ''}
       ${pendingBulkFolder ? renderBulkFolderConfirm() : ''}
+      ${pendingGroup4AM ? renderGroup4AMConfirm() : ''}
     `;
 
     // Nothing on screen changed → leave the page alone entirely. Most
@@ -4643,7 +4662,10 @@
   delegate('[data-group-tag]', el => groupToggleTag(el.dataset.groupTagId, el.dataset.groupTag));
   delegate('[data-group-down]', el => groupDowngrade(el.dataset.groupDown));
   delegate('[data-group-one-min]', el => groupSnoozeOne(el.dataset.groupOneId, parseInt(el.dataset.groupOneMin, 10)));
-  delegate('[data-group-one-abs]', el => groupSnoozeOne(el.dataset.groupOneId, 0, nextOccurrenceISO(parseInt(el.dataset.groupOneAbs, 10))));
+  // 4 AM on a group row asks "Are you sure?" first.
+  delegate('[data-group-four-am-ask]', el => { pendingGroup4AM = el.dataset.groupFourAmAsk; render(); });
+  delegate('#confirm-group-4am-btn', () => { const id = pendingGroup4AM; pendingGroup4AM = null; if (id) groupSnoozeOne(id, 0, nextOccurrenceISO(4)); else render(); });
+  delegate('#cancel-group-4am-btn', () => { pendingGroup4AM = null; render(); });
   delegate('[data-group-snooze]', el => snoozeGroup(parseInt(el.dataset.groupSnooze, 10)));
   delegate('[data-group-remove]', el => removeFromGroup(el.dataset.groupRemove));
   delegate('#group-undo-btn', undoGroupAction);
