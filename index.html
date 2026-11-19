@@ -1032,7 +1032,7 @@
   let pushTimer = null;
   let pushRetryTimer = null;
   let pushRetryAttempt = 0;
-  const PUSH_RETRY_DELAYS = [5000, 15000, 30000]; // then repeats every 30s after that
+  const PUSH_RETRY_DELAYS = [2500, 7500, 15000]; // then repeats every 15s after that
   // Drop anything from the waiting popup queue that no longer genuinely
   // qualifies as due — e.g. its time got pushed later, it was marked done,
   // or it was deleted. Runs on every save so it can't go stale no matter
@@ -1063,7 +1063,7 @@
       clearTimeout(pushRetryTimer);
       pushRetryAttempt = 0;
       // Short pause so several quick taps go up as one upload.
-      pushTimer = setTimeout(() => { pushTimer = null; pushToDrive(); }, 300);
+      pushTimer = setTimeout(() => { pushTimer = null; pushToDrive(); }, 150);
     } else {
       ensureConnected(); // reconnects, then uploads everything pending
     }
@@ -3067,6 +3067,27 @@
     save();
     render();
   }
+  let pendingGroupDown = null; // reminder id waiting on the downgrade "Are you sure?"
+  function renderGroupDownConfirm() {
+    const r = reminders.find(x => x.id === pendingGroupDown);
+    const step = r ? groupNextStep(r) : null;
+    if (!r || !step) { pendingGroupDown = null; return ''; }
+    const from = String(priorityKey(r.priority, r.folders));
+    const leaves = parseInt(step, 10) !== 1;
+    return `
+      <div class="alarm-overlay">
+        <div class="alarm-card">
+          <div class="alarm-glyph">?</div>
+          <p class="alarm-title" style="font-size:24px; font-weight:700; margin:6px 0 4px;">Are you sure?</p>
+          <p class="alarm-time" style="font-size:16px;">Downgrade <b>${escapeHtml(r.title)}</b> from <b>${escapeHtml(from)}</b> to <b>${escapeHtml(step)}</b></p>
+          ${leaves ? `<p class="alarm-time" style="font-size:14px;">It will stop popping up (only priority 1 pops up).</p>` : ''}
+          <div class="alarm-actions">
+            <button class="alarm-done-btn" id="confirm-group-down-btn" style="background:var(--ember);">Yes, downgrade</button>
+            <button class="alarm-dismiss-btn" id="cancel-group-down-btn">Cancel</button>
+          </div>
+        </div>
+      </div>`;
+  }
   let pendingGroup4AM = null; // reminder id waiting on the 4 AM "Are you sure?"
   function renderGroup4AMConfirm() {
     const r = reminders.find(x => x.id === pendingGroup4AM);
@@ -3165,7 +3186,10 @@
               <button data-group-four-am-ask="${r.id}" title="Snooze this one to the next 4 AM" style="border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:12px; padding:3px 12px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">4 AM</button>
             </span>
           </span>
-          <button data-group-remove="${r.id}" title="Remove from group (back in 5 min)" aria-label="Remove from group" style="flex:0 0 auto; border:none; background:#fde8e8; color:#c62828; border-radius:8px; width:32px; height:30px; font-size:15px; cursor:pointer;">&#10005;</button>
+          <span style="flex:0 0 auto; display:flex; flex-direction:column; align-items:center; gap:6px;">
+            <button data-group-remove="${r.id}" title="Remove from group (back in 5 min)" aria-label="Remove from group" style="border:none; background:#fde8e8; color:#c62828; border-radius:8px; width:32px; height:30px; font-size:15px; cursor:pointer;">&#10005;</button>
+            <button data-group-delete-ask="${r.id}" title="Delete this reminder (moves to Trash)" aria-label="Delete reminder" style="border:1px solid #f3b4b4; background:var(--card); color:#c62828; border-radius:8px; padding:3px 6px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">Delete</button>
+          </span>
         </div>`;
     }).join('');
     return `
@@ -3540,6 +3564,7 @@
       ${pendingBulkSnooze ? renderBulkSnoozeConfirm() : ''}
       ${pendingBulkFolder ? renderBulkFolderConfirm() : ''}
       ${pendingGroup4AM ? renderGroup4AMConfirm() : ''}
+      ${pendingGroupDown ? renderGroupDownConfirm() : ''}
     `;
 
     // Nothing on screen changed → leave the page alone entirely. Most
@@ -3917,7 +3942,7 @@
     if (pendingDeleteIds.size === 1) {
       const onlyId = Array.from(pendingDeleteIds)[0];
       const r = reminders.find(r => r.id === onlyId);
-      titleText = r ? `Move "${escapeHtml(r.title)}" to Trash?` : 'Move this reminder to Trash?';
+      titleText = r ? `Are you sure? Move "${escapeHtml(r.title)}" to Trash?` : "Are you sure? Move this reminder to Trash?";
     } else {
       titleText = `Are you sure? Move ${pendingDeleteIds.size} reminders to Trash?`;
     }
@@ -4660,7 +4685,11 @@
   delegate('#group-to-regular', () => { groupRegular = true; lockedAlarmId = null; lastAlarmUndo = null; render(); });
   delegate('#group-back-btn', () => { groupRegular = false; alarmEditing = false; alarmEditFolders = null; render(); });
   delegate('[data-group-tag]', el => groupToggleTag(el.dataset.groupTagId, el.dataset.groupTag));
-  delegate('[data-group-down]', el => groupDowngrade(el.dataset.groupDown));
+  // Delete and ↓ on a group row ask "Are you sure?" first.
+  delegate('[data-group-delete-ask]', el => deleteFromAlarm(el.dataset.groupDeleteAsk));
+  delegate('[data-group-down]', el => { pendingGroupDown = el.dataset.groupDown; render(); });
+  delegate('#confirm-group-down-btn', () => { const id = pendingGroupDown; pendingGroupDown = null; if (id) groupDowngrade(id); else render(); });
+  delegate('#cancel-group-down-btn', () => { pendingGroupDown = null; render(); });
   delegate('[data-group-one-min]', el => groupSnoozeOne(el.dataset.groupOneId, parseInt(el.dataset.groupOneMin, 10)));
   // 4 AM on a group row asks "Are you sure?" first.
   delegate('[data-group-four-am-ask]', el => { pendingGroup4AM = el.dataset.groupFourAmAsk; render(); });
@@ -4735,13 +4764,13 @@
 
   loadLocal();
   render();
-  setInterval(checkDue, 10000);
+  setInterval(checkDue, 5000);
   checkDue();
-  // Check Drive for other devices' changes every 4 seconds (a tiny request;
+  // Check Drive for other devices' changes every 2 seconds (a tiny request;
   // the full file only downloads when something actually changed).
-  setInterval(() => { if (!document.hidden) pullFromDrive(); }, 4000);
+  setInterval(() => { if (!document.hidden) pullFromDrive(); }, 2000);
   // If the connection ever drops, quietly reconnect on its own.
-  setInterval(ensureConnected, 20000);
+  setInterval(ensureConnected, 10000);
 
   // The moment the browser regains a connection (wifi/data reconnects),
   // immediately retry any pending push and pull, instead of waiting for
