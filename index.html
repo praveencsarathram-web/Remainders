@@ -2408,6 +2408,7 @@
       if (pendingDeleteIds.has(r.id)) {
         r.trashed = true;
         r.trashedAt = now;
+        r.groupFirst = null;
         r.updated = now;
         r.version = (r.version || 1) + 1;
       }
@@ -2948,7 +2949,20 @@
       if (!groupIds.length) groupIds = null;
     }
     if (!groupIds) {
-      const next = groupEligibleIds().slice(0, GROUP_SIZE);
+      // A reminder you ✕'d out of an earlier group comes first within its
+      // own priority level (PP and P still stay above it). Otherwise the
+      // usual order: priority, then oldest due first.
+      const byId = new Map(reminders.map(x => [x.id, x]));
+      const elig = groupEligibleIds();
+      const pos = new Map(elig.map((id, i) => [id, i]));
+      elig.sort((a, b) => {
+        const ra = byId.get(a), rb = byId.get(b);
+        if (!ra || !rb) return pos.get(a) - pos.get(b);
+        return (queueRank(ra) - queueRank(rb))
+          || ((rb.groupFirst ? 1 : 0) - (ra.groupFirst ? 1 : 0))
+          || (pos.get(a) - pos.get(b));
+      });
+      const next = elig.slice(0, GROUP_SIZE);
       groupIds = next.length ? next : null;
     }
     return groupIds;
@@ -2967,7 +2981,7 @@
     groupUndo = {
       items: ids.map(id => {
         const r = byId.get(id);
-        return r ? { id, when: r.when, suppressedUntil: r.suppressedUntil, done: r.done, completedAt: r.completedAt, priority: r.priority, folders: (r.folders || []).slice() } : null;
+        return r ? { id, when: r.when, suppressedUntil: r.suppressedUntil, done: r.done, completedAt: r.completedAt, priority: r.priority, folders: (r.folders || []).slice(), groupFirst: r.groupFirst || null } : null;
       }).filter(Boolean),
       alarmQueue: alarmQueue.slice(),
       groupIds: groupIds ? groupIds.slice() : null,
@@ -2976,8 +2990,15 @@
     };
   }
   function removeFromGroup(id) {
-    snapGroup([]);
+    snapGroup([id]);
     groupHold.set(id, Date.now() + GROUP_HOLD_MS);
+    // Mark it so it comes first in a later group (synced across devices).
+    const rm = reminders.find(x => x.id === id);
+    if (rm) {
+      rm.groupFirst = Date.now();
+      rm.updated = Date.now(); rm.version = (rm.version || 1) + 1;
+      save();
+    }
     if (groupIds) groupIds = groupIds.filter(x => x !== id);
     if (groupIds && !groupIds.length) groupIds = null;
     render();
@@ -2992,6 +3013,7 @@
       const r = byId.get(id);
       if (!r) return;
       r.when = when; r.suppressedUntil = null;
+      r.groupFirst = null;
       r.updated = Date.now(); r.version = (r.version || 1) + 1;
       logChange(r.id, r.title);
       groupHold.delete(id);
@@ -3012,6 +3034,7 @@
     snapGroup([id]);
     r.when = whenISO || new Date(Date.now() + minutes * 60000).toISOString();
     r.suppressedUntil = null; r.done = false; r.completedAt = null;
+    r.groupFirst = null; // dealt with in the group → mark cleared
     r.updated = Date.now(); r.version = (r.version || 1) + 1;
     logChange(r.id, r.title);
     groupHold.delete(id);
@@ -3062,6 +3085,7 @@
     if (!fl.length) fl = ['General'];
     r.priority = pr;
     r.folders = fl;
+    r.groupFirst = null; // dealt with in the group → mark cleared
     r.updated = Date.now(); r.version = (r.version || 1) + 1;
     logChange(r.id, r.title);
     save();
@@ -3116,6 +3140,7 @@
       r.when = s.when; r.suppressedUntil = s.suppressedUntil;
       r.done = s.done; r.completedAt = s.completedAt;
       r.priority = s.priority; r.folders = s.folders.slice();
+      r.groupFirst = s.groupFirst || null;
       r.updated = Date.now(); r.version = (r.version || 1) + 1;
     });
     if (u.items.length) save();
