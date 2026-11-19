@@ -2848,7 +2848,11 @@
       const a = byId.get(idA);
       const b = byId.get(idB);
       if (!a || !b) return 0;
-      return (popupRank(a) - popupRank(b)) || (parseTime(a.when) - parseTime(b.when));
+      // A reminder you ✕'d out of a group comes first within its own
+      // priority level in the regular popup (PP and P stay above it).
+      return (popupRank(a) - popupRank(b))
+        || ((b.groupFirst ? 1 : 0) - (a.groupFirst ? 1 : 0))
+        || (parseTime(a.when) - parseTime(b.when));
     });
     // During a folder popup run nothing from outside interrupts — not even
     // a beep. Anything that came due waits silently in the normal queue.
@@ -2949,18 +2953,14 @@
       if (!groupIds.length) groupIds = null;
     }
     if (!groupIds) {
-      // A reminder you ✕'d out of an earlier group comes first within its
-      // own priority level (PP and P still stay above it). Otherwise the
-      // usual order: priority, then oldest due first.
+      // Groups use the normal order (priority, then oldest due first) —
+      // the ✕ mark only moves a reminder up in the regular popup.
       const byId = new Map(reminders.map(x => [x.id, x]));
       const elig = groupEligibleIds();
-      const pos = new Map(elig.map((id, i) => [id, i]));
       elig.sort((a, b) => {
         const ra = byId.get(a), rb = byId.get(b);
-        if (!ra || !rb) return pos.get(a) - pos.get(b);
-        return (queueRank(ra) - queueRank(rb))
-          || ((rb.groupFirst ? 1 : 0) - (ra.groupFirst ? 1 : 0))
-          || (pos.get(a) - pos.get(b));
+        if (!ra || !rb) return 0;
+        return (queueRank(ra) - queueRank(rb)) || (parseTime(ra.when) - parseTime(rb.when));
       });
       const next = elig.slice(0, GROUP_SIZE);
       groupIds = next.length ? next : null;
@@ -2992,7 +2992,8 @@
   function removeFromGroup(id) {
     snapGroup([id]);
     groupHold.set(id, Date.now() + GROUP_HOLD_MS);
-    // Mark it so it comes first in a later group (synced across devices).
+    // Mark it so it comes first in the regular popup (synced across
+    // devices). Cleared only by acting on it inside a group.
     const rm = reminders.find(x => x.id === id);
     if (rm) {
       rm.groupFirst = Date.now();
