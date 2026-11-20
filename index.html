@@ -3019,14 +3019,16 @@
       groupRegular
     };
   }
-  function removeFromGroup(id) {
+  // ✕ on a group row. In All / 1: marks it (comes first in the regular
+  // popup, shows in the ✕ tab) and gives it a 5-minute break. In the ✕
+  // tab (unmark = true, after "Are you sure?"): removes the mark instead,
+  // same 5-minute break, then it rejoins the normal group order.
+  function removeFromGroup(id, unmark) {
     snapGroup([id]);
     groupHold.set(id, Date.now() + GROUP_HOLD_MS);
-    // Mark it so it comes first in the regular popup (synced across
-    // devices). Cleared only by acting on it inside a group.
     const rm = reminders.find(x => x.id === id);
     if (rm) {
-      rm.groupFirst = Date.now();
+      rm.groupFirst = unmark ? null : Date.now();
       rm.updated = Date.now(); rm.version = (rm.version || 1) + 1;
       save();
     }
@@ -3044,7 +3046,7 @@
       const r = byId.get(id);
       if (!r) return;
       r.when = when; r.suppressedUntil = null;
-      r.groupFirst = null;
+      if (settings.groupFilter !== 'x') r.groupFirst = null; // ✕ tab keeps the mark
       r.updated = Date.now(); r.version = (r.version || 1) + 1;
       logChange(r.id, r.title);
       groupHold.delete(id);
@@ -3065,7 +3067,9 @@
     snapGroup([id]);
     r.when = whenISO || new Date(Date.now() + minutes * 60000).toISOString();
     r.suppressedUntil = null; r.done = false; r.completedAt = null;
-    r.groupFirst = null; // dealt with in the group → mark cleared
+    // Snoozed in All / 1 → mark cleared. Snoozed in the ✕ tab → mark kept,
+    // so it comes back to the ✕ list when it's due again.
+    if (settings.groupFilter !== 'x') r.groupFirst = null;
     r.updated = Date.now(); r.version = (r.version || 1) + 1;
     logChange(r.id, r.title);
     groupHold.delete(id);
@@ -3121,6 +3125,24 @@
     logChange(r.id, r.title);
     save();
     render();
+  }
+  let pendingGroupUnmark = null; // reminder id waiting on "Remove from the ✕ list?"
+  function renderGroupUnmarkConfirm() {
+    const r = reminders.find(x => x.id === pendingGroupUnmark);
+    if (!r) { pendingGroupUnmark = null; return ''; }
+    return `
+      <div class="alarm-overlay">
+        <div class="alarm-card">
+          <div class="alarm-glyph">?</div>
+          <p class="alarm-title" style="font-size:24px; font-weight:700; margin:6px 0 4px;">Are you sure?</p>
+          <p class="alarm-time" style="font-size:16px;">Remove <b>${escapeHtml(r.title)}</b> from the &#10005; list?</p>
+          <p class="alarm-time" style="font-size:14px;">It will rejoin the normal group after 5 minutes.</p>
+          <div class="alarm-actions">
+            <button class="alarm-done-btn" id="confirm-group-unmark-btn" style="background:var(--ember);">Yes, remove</button>
+            <button class="alarm-dismiss-btn" id="cancel-group-unmark-btn">Cancel</button>
+          </div>
+        </div>
+      </div>`;
   }
   let pendingGroupDown = null; // reminder id waiting on the downgrade "Are you sure?"
   function renderGroupDownConfirm() {
@@ -3260,7 +3282,7 @@
             </span>
           </span>
           <span style="flex:0 0 auto; display:flex; flex-direction:column; align-items:center; gap:6px;">
-            <button data-group-remove="${r.id}" title="Remove from group (back in 5 min)" aria-label="Remove from group" style="border:none; background:#fde8e8; color:#c62828; border-radius:8px; width:32px; height:30px; font-size:15px; cursor:pointer;">&#10005;</button>
+            <button data-group-remove="${r.id}" title="${gfNow === 'x' ? 'Remove from the ✕ list (back in the normal group in 5 min)' : 'Remove from group (back in 5 min)'}" aria-label="Remove from group" style="border:none; background:#fde8e8; color:#c62828; border-radius:8px; width:32px; height:30px; font-size:15px; cursor:pointer;">&#10005;</button>
             <button data-group-delete-ask="${r.id}" title="Delete this reminder (moves to Trash)" aria-label="Delete reminder" style="border:1px solid #f3b4b4; background:var(--card); color:#c62828; border-radius:8px; padding:3px 6px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">Delete</button>
           </span>
         </div>`;
@@ -3640,6 +3662,7 @@
       ${pendingBulkFolder ? renderBulkFolderConfirm() : ''}
       ${pendingGroup4AM ? renderGroup4AMConfirm() : ''}
       ${pendingGroupDown ? renderGroupDownConfirm() : ''}
+      ${pendingGroupUnmark ? renderGroupUnmarkConfirm() : ''}
     `;
 
     // Nothing on screen changed → leave the page alone entirely. Most
@@ -4775,7 +4798,12 @@
     else if (id) groupSnoozeOne(id, 0, nextOccurrenceISO(4)); else render(); });
   delegate('#cancel-group-4am-btn', () => { pendingGroup4AM = null; render(); });
   delegate('[data-group-snooze]', el => snoozeGroup(parseInt(el.dataset.groupSnooze, 10)));
-  delegate('[data-group-remove]', el => removeFromGroup(el.dataset.groupRemove));
+  delegate('[data-group-remove]', el => {
+    if (settings.groupFilter === 'x') { pendingGroupUnmark = el.dataset.groupRemove; render(); }
+    else removeFromGroup(el.dataset.groupRemove);
+  });
+  delegate('#confirm-group-unmark-btn', () => { const id = pendingGroupUnmark; pendingGroupUnmark = null; if (id) removeFromGroup(id, true); else render(); });
+  delegate('#cancel-group-unmark-btn', () => { pendingGroupUnmark = null; render(); });
   delegate('#group-undo-btn', undoGroupAction);
   delegate('#exit-folder-run-btn', () => endFolderRun(false));
   delegate('#folder-run-done-close', () => { folderRunDone = null; render(); });
