@@ -943,15 +943,41 @@
   // is always the normal priority rule — the mode only decides who pops up.
   const POPUP_MODES = ['all', 'notpraveen', 'onlypraveen'];
   const POPUP_MODE_LABELS = { all: 'All', notpraveen: 'Except Praveen', onlypraveen: 'Only Praveen' };
-  let settings = { popupMode: 'all', popupModeUpdated: 0 };
+  // Group popup tabs (synced): 'all' = everything, 'one' = plain 1 only
+  // (no PP, P or Priority tag), 'x' = only reminders ✕'d out of a group.
+  const GROUP_FILTERS = ['all', 'one', 'x'];
+  const GROUP_FILTER_LABELS = { all: 'All', one: '1', x: '\u2715' };
+  let settings = { popupMode: 'all', popupModeUpdated: 0, groupFilter: 'all', groupFilterUpdated: 0 };
   function cleanSettings(s) {
     const mode = s && POPUP_MODES.includes(s.popupMode) ? s.popupMode : 'all';
-    return { popupMode: mode, popupModeUpdated: (s && s.popupModeUpdated) || 0 };
+    const gf = s && GROUP_FILTERS.includes(s.groupFilter) ? s.groupFilter : 'all';
+    return { popupMode: mode, popupModeUpdated: (s && s.popupModeUpdated) || 0,
+             groupFilter: gf, groupFilterUpdated: (s && s.groupFilterUpdated) || 0 };
   }
-  // Newest change wins, so changing it on one device spreads to the others.
+  // Newest change wins (each setting on its own), so changing it on one
+  // device spreads to the others.
   function mergeSettings(local, remote) {
     const l = cleanSettings(local), r = cleanSettings(remote);
-    return r.popupModeUpdated > l.popupModeUpdated ? r : l;
+    const pm = r.popupModeUpdated > l.popupModeUpdated ? r : l;
+    const gf = r.groupFilterUpdated > l.groupFilterUpdated ? r : l;
+    return { popupMode: pm.popupMode, popupModeUpdated: pm.popupModeUpdated,
+             groupFilter: gf.groupFilter, groupFilterUpdated: gf.groupFilterUpdated };
+  }
+  function groupFilterMatches(r) {
+    const f = settings.groupFilter || 'all';
+    if (f === 'x') return !!r.groupFirst;
+    if (f === 'one') {
+      const fl = folderListOf(r.folders);
+      return (r.priority || 3) === 1 && !fl.includes('PP') && !fl.includes('P') && !fl.includes('Priority');
+    }
+    return true;
+  }
+  function setGroupFilter(f) {
+    if (!GROUP_FILTERS.includes(f) || f === settings.groupFilter) return;
+    settings = Object.assign(cleanSettings(settings), { groupFilter: f, groupFilterUpdated: Date.now() });
+    groupIds = null; groupUndo = null; // rebuild the group straight away
+    save();
+    render();
   }
   function popupAllowed(r) {
     // Only priority 1 pops up (PP, P, 1P and plain 1). 2P and below never
@@ -967,7 +993,7 @@
   }
   function setPopupMode(mode) {
     if (!POPUP_MODES.includes(mode) || mode === settings.popupMode) return;
-    settings = { popupMode: mode, popupModeUpdated: Date.now() };
+    settings = Object.assign(cleanSettings(settings), { popupMode: mode, popupModeUpdated: Date.now() });
     lockedAlarmId = null; lastAlarmUndo = null;
     groupIds = null; groupUndo = null; groupRegular = false; // next group follows the new mode
     save();            // drops anything that no longer qualifies
@@ -1231,7 +1257,7 @@
     const h = hist.map(e => e.id + '|' + e.at).sort().join(',');
     const pp = (ppl || []).map(x => x.id + ':' + (x.updated || 0)).sort().join(',');
     const s = cleanSettings(sett);
-    return r + '#' + f + '#' + h + '#' + pp + '#' + s.popupMode + ':' + s.popupModeUpdated;
+    return r + '#' + f + '#' + h + '#' + pp + '#' + s.popupMode + ':' + s.popupModeUpdated + '#' + s.groupFilter + ':' + s.groupFilterUpdated;
   }
   // People merge: newest edit wins; deleted people are kept as hidden
   // markers so a deletion on one device spreads instead of coming back.
@@ -1276,12 +1302,14 @@
     const localChanged = after !== before;
     if (localChanged) {
       const modeChanged = mergedSettings.popupMode !== settings.popupMode;
+      const filterChanged = mergedSettings.groupFilter !== settings.groupFilter;
       reminders = merged;
       folders = mergedFolders;
       changeHistory = mergedHistory;
       people = mergedPeople;
       settings = mergedSettings;
       if (modeChanged) { lockedAlarmId = null; lastAlarmUndo = null; }
+      if (filterChanged) { groupIds = null; groupUndo = null; } // another device switched tab
       migrateStaleSuppressedFlags();
       pruneAlarmQueue();
       pruneFolderRun();
@@ -2943,13 +2971,15 @@
   }
   function isGroupHeld(id) { return (groupHold.get(id) || 0) > Date.now(); }
   function groupEligibleIds() {
-    return alarmQueue.filter(id => !isGroupHeld(id));
+    const byId = new Map(reminders.map(x => [x.id, x]));
+    return alarmQueue.filter(id => !isGroupHeld(id) && byId.has(id) && groupFilterMatches(byId.get(id)));
   }
   // Keeps the current group as-is (minus anything snoozed, deleted or
   // no longer allowed); builds the next 10 only when it's empty.
   function ensureGroup() {
     if (groupIds) {
-      groupIds = groupIds.filter(id => alarmQueue.includes(id));
+      const byIdG = new Map(reminders.map(x => [x.id, x]));
+      groupIds = groupIds.filter(id => alarmQueue.includes(id) && byIdG.has(id) && groupFilterMatches(byIdG.get(id)));
       if (!groupIds.length) groupIds = null;
     }
     if (!groupIds) {
@@ -3004,12 +3034,12 @@
     if (groupIds && !groupIds.length) groupIds = null;
     render();
   }
-  function snoozeGroup(minutes) {
+  function snoozeGroup(minutes, whenISO) {
     if (!groupIds || !groupIds.length) return;
     const ids = groupIds.slice();
     snapGroup(ids);
     const byId = new Map(reminders.map(x => [x.id, x]));
-    const when = new Date(Date.now() + minutes * 60000).toISOString();
+    const when = whenISO || new Date(Date.now() + minutes * 60000).toISOString();
     ids.forEach(id => {
       const r = byId.get(id);
       if (!r) return;
@@ -3115,14 +3145,16 @@
   }
   let pendingGroup4AM = null; // reminder id waiting on the 4 AM "Are you sure?"
   function renderGroup4AMConfirm() {
-    const r = reminders.find(x => x.id === pendingGroup4AM);
-    if (!r) { pendingGroup4AM = null; return ''; }
+    const all = pendingGroup4AM === '*all*';
+    const r = all ? null : reminders.find(x => x.id === pendingGroup4AM);
+    if (!all && !r) { pendingGroup4AM = null; return ''; }
+    const n = (groupIds || []).length;
     return `
       <div class="alarm-overlay">
         <div class="alarm-card">
           <div class="alarm-glyph">?</div>
           <p class="alarm-title" style="font-size:24px; font-weight:700; margin:6px 0 4px;">Are you sure?</p>
-          <p class="alarm-time" style="font-size:16px;">Snooze <b>${escapeHtml(r.title)}</b> to 4 AM</p>
+          <p class="alarm-time" style="font-size:16px;">Snooze ${all ? `<b>all ${n} in this group</b>` : `<b>${escapeHtml(r.title)}</b>`} to 4 AM</p>
           <p class="alarm-time" style="font-size:16px;">Next time: <b>${fmtTime(nextOccurrenceISO(4))}</b></p>
           <div class="alarm-actions">
             <button class="alarm-done-btn" id="confirm-group-4am-btn" style="background:var(--ember);">Yes, 4 AM</button>
@@ -3167,7 +3199,18 @@
   }
   function renderGroupAlarm() {
     const ids = ensureGroup();
-    const badge = `<span class="popup-mode-badge ${settings.popupMode === 'onlypraveen' ? 'praveen' : ''}">Popups: ${POPUP_MODE_LABELS[settings.popupMode]}</span>`;
+    // Tabs: All · 1 · ✕ (replace the "Popups: …" badge on this screen;
+    // the Praveen mode still applies and is changed in Settings).
+    const byIdAll = new Map(reminders.map(x => [x.id, x]));
+    const gfNow = settings.groupFilter || 'all';
+    const countFor = f => { const keep = settings.groupFilter; settings.groupFilter = f;
+      const n = alarmQueue.filter(id => byIdAll.has(id) && groupFilterMatches(byIdAll.get(id))).length;
+      settings.groupFilter = keep; return n; };
+    const badge = `<div style="display:flex; gap:4px; background:var(--soft, #eef6f3); border-radius:10px; padding:4px; flex:1 1 100%;">${GROUP_FILTERS.map(f => {
+      const on = f === gfNow;
+      return `<button data-group-filter="${f}" style="flex:1; border:none; border-radius:8px; padding:7px 0; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; background:${on ? 'var(--ember)' : 'transparent'}; color:${on ? '#ffffff' : 'var(--muted)'};">${GROUP_FILTER_LABELS[f]}<span style="font-size:11px; margin-left:4px; opacity:0.85;">${countFor(f)}</span></button>`;
+    }).join('')}</div>`;
+    const matchingQueued = alarmQueue.filter(id => byIdAll.has(id) && groupFilterMatches(byIdAll.get(id))).length;
     const undoBtn = groupUndo ? `<button class="alarm-dismiss-btn" id="group-undo-btn" style="margin-top:12px; width:100%; border:1px solid var(--ember); color:var(--ember);">&#8592; Previous (undo last)</button>` : '';
     const footer = `
       ${undoBtn}
@@ -3179,15 +3222,19 @@
         <div class="alarm-overlay">
           <div class="alarm-card">
             ${badge}
+            ${!matchingQueued && gfNow !== 'all' ? `
+            <p class="alarm-title" style="font-size:18px; font-weight:700; margin-top:14px;">Nothing in ${GROUP_FILTER_LABELS[gfNow]} right now</p>
+            <p class="alarm-time">${alarmQueue.length} other reminder${alarmQueue.length === 1 ? '' : 's'} due.</p>
+            <button class="alarm-done-btn" data-group-filter="all" style="margin-top:10px; width:100%;">Show All</button>` : `
             <p class="alarm-title" style="font-size:18px; font-weight:700; margin-top:14px;">Nothing left for the group</p>
-            <p class="alarm-time">${alarmQueue.length} removed, waiting in the regular popup. They can rejoin the group 5 minutes after removal.</p>
+            <p class="alarm-time">${matchingQueued} removed, waiting in the regular popup. They can rejoin the group 5 minutes after removal.</p>`}
             ${footer}
           </div>
         </div>`;
     }
     const byId = new Map(reminders.map(x => [x.id, x]));
-    const held = alarmQueue.filter(id => !ids.includes(id) && isGroupHeld(id)).length;
-    const after = alarmQueue.length - ids.length - held;
+    const held = alarmQueue.filter(id => !ids.includes(id) && isGroupHeld(id) && byId.has(id) && groupFilterMatches(byId.get(id))).length;
+    const after = matchingQueued - ids.length - held;
     const rows = ids.map(id => {
       const r = byId.get(id);
       if (!r) return '';
@@ -3203,7 +3250,7 @@
           <span style="flex:0 0 auto; min-width:34px; height:28px; margin-top:2px; border-radius:14px; border:2px solid ${isTag ? TAG_BLUE_FILL : color}; color:${color}; ${isTag ? `background:${TAG_BLUE_SOFT};` : ''} font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center; padding:0 4px;">${escapeHtml(label)}</span>
           <span style="flex:1; min-width:0;">
             <span style="display:block; font-size:14px; ${base === 1 ? 'color:#FF0000;' : ''} ${reminderTitleStyle(r)} overflow-wrap:anywhere;">${escapeHtml(r.title)}</span>
-            <span style="display:block; font-size:11.5px; color:var(--muted);">Was due ${fmtTime(r.when)}${tagLine}</span>
+            <span style="display:block; font-size:11.5px; color:var(--muted);">Was due ${fmtTime(r.when)}${tagLine}${r.groupFirst ? ' &middot; \u2715 marked' : ''}</span>
             <span style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
               ${groupTagChip(r, 'PP')}
               ${groupTagChip(r, 'P')}
@@ -3221,18 +3268,20 @@
     return `
       <div class="alarm-overlay">
         <div class="alarm-card" style="max-width:460px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
-            ${badge}
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;">
+            <span style="font-size:12px; color:var(--muted);">Show in group</span>
             <span style="font-size:14px; font-weight:700;">Group &middot; ${ids.length}</span>
           </div>
+          ${badge}
           <div style="margin:10px 0 12px;">${rows}</div>
           <p class="snooze-label">Snooze all ${ids.length} for</p>
-          <div class="snooze-grid" style="grid-template-columns:repeat(5, 1fr);">
+          <div class="snooze-grid" style="grid-template-columns:repeat(6, 1fr);">
             <button class="snooze-btn" data-group-snooze="1">1m</button>
             <button class="snooze-btn" data-group-snooze="5">5m</button>
             <button class="snooze-btn" data-group-snooze="15">15m</button>
             <button class="snooze-btn" data-group-snooze="30">30m</button>
             <button class="snooze-btn" data-group-snooze="60">1h</button>
+            <button class="snooze-btn" data-group-all-four-am-ask="1">4 AM</button>
           </div>
           <p class="queue-note">${Math.max(0, after)} more after this group${held ? ` &middot; ${held} removed (in regular popup now, back in group after 5 min)` : ''}</p>
           ${footer}
@@ -4678,6 +4727,7 @@
   function delegate(sel, fn) { delegatedClicks.push([sel, fn]); }
   delegate('#show-more-btn', () => { listLimit += LIST_PAGE; render(); });
   delegate('[data-popup-mode]', el => setPopupMode(el.dataset.popupMode));
+  delegate('[data-group-filter]', el => setGroupFilter(el.dataset.groupFilter));
   delegate('[data-desktop-nav]', el => (() => goToDesktopNav(el.dataset.desktopNav))());
   delegate('[data-stat-filter]', el => (() => toggleDueStateFilter(el.dataset.statFilter))());
   delegate('[data-bump]', el => (() => { bumpAddTime(parseInt(el.dataset.bump, 10)); markSnoozeSelected(el); })());
@@ -4719,7 +4769,10 @@
   delegate('[data-group-one-min]', el => groupSnoozeOne(el.dataset.groupOneId, parseInt(el.dataset.groupOneMin, 10)));
   // 4 AM on a group row asks "Are you sure?" first.
   delegate('[data-group-four-am-ask]', el => { pendingGroup4AM = el.dataset.groupFourAmAsk; render(); });
-  delegate('#confirm-group-4am-btn', () => { const id = pendingGroup4AM; pendingGroup4AM = null; if (id) groupSnoozeOne(id, 0, nextOccurrenceISO(4)); else render(); });
+  delegate('[data-group-all-four-am-ask]', () => { pendingGroup4AM = '*all*'; render(); });
+  delegate('#confirm-group-4am-btn', () => { const id = pendingGroup4AM; pendingGroup4AM = null;
+    if (id === '*all*') snoozeGroup(0, nextOccurrenceISO(4));
+    else if (id) groupSnoozeOne(id, 0, nextOccurrenceISO(4)); else render(); });
   delegate('#cancel-group-4am-btn', () => { pendingGroup4AM = null; render(); });
   delegate('[data-group-snooze]', el => snoozeGroup(parseInt(el.dataset.groupSnooze, 10)));
   delegate('[data-group-remove]', el => removeFromGroup(el.dataset.groupRemove));
