@@ -3282,7 +3282,8 @@
             </span>
           </span>
           <span style="flex:0 0 auto; display:flex; flex-direction:column; align-items:center; gap:6px;">
-            <button data-group-remove="${r.id}" title="${gfNow === 'x' ? 'Remove from the ✕ list (back in the normal group in 5 min)' : 'Remove from group (back in 5 min)'}" aria-label="Remove from group" style="border:none; background:#fde8e8; color:#c62828; border-radius:8px; width:32px; height:30px; font-size:15px; cursor:pointer;">&#10005;</button>
+            <button data-group-remove="${r.id}" title="Out of this group (back in 5 min)" aria-label="Out of this group" style="border:none; background:#fde8e8; color:#c62828; border-radius:8px; width:32px; height:30px; font-size:15px; cursor:pointer;">&#10005;</button>
+            ${gfNow === 'x' ? `<button data-group-unmark-ask="${r.id}" title="Remove from the ✕ list (rejoins the normal group in 5 min)" style="border:1px solid #1D9E75; background:var(--card); color:#0F6E56; border-radius:8px; padding:3px 6px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">Remove</button>` : ''}
             <button data-group-delete-ask="${r.id}" title="Delete this reminder (moves to Trash)" aria-label="Delete reminder" style="border:1px solid #f3b4b4; background:var(--card); color:#c62828; border-radius:8px; padding:3px 6px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">Delete</button>
           </span>
         </div>`;
@@ -4798,10 +4799,10 @@
     else if (id) groupSnoozeOne(id, 0, nextOccurrenceISO(4)); else render(); });
   delegate('#cancel-group-4am-btn', () => { pendingGroup4AM = null; render(); });
   delegate('[data-group-snooze]', el => snoozeGroup(parseInt(el.dataset.groupSnooze, 10)));
-  delegate('[data-group-remove]', el => {
-    if (settings.groupFilter === 'x') { pendingGroupUnmark = el.dataset.groupRemove; render(); }
-    else removeFromGroup(el.dataset.groupRemove);
-  });
+  // ✕: out of this group for 5 minutes (in the ✕ tab it keeps its mark).
+  delegate('[data-group-remove]', el => removeFromGroup(el.dataset.groupRemove));
+  // Remove (✕ tab only): "Are you sure?", then the ✕ mark is removed.
+  delegate('[data-group-unmark-ask]', el => { pendingGroupUnmark = el.dataset.groupUnmarkAsk; render(); });
   delegate('#confirm-group-unmark-btn', () => { const id = pendingGroupUnmark; pendingGroupUnmark = null; if (id) removeFromGroup(id, true); else render(); });
   delegate('#cancel-group-unmark-btn', () => { pendingGroupUnmark = null; render(); });
   delegate('#group-undo-btn', undoGroupAction);
